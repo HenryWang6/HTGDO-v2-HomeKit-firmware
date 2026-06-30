@@ -3,6 +3,12 @@
 .ccls-cache
 .clang_complete
 .gcc-flags.json
+
+# Local/private agent notes
+AGENTS.md
+.agents/
+.codex/
+
 .pio
 .pioenvs
 .piolibdeps
