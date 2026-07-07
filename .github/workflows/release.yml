@@ -1,292 +1,241 @@
-name: Release
+name: Release HomeKit Firmware
 
 on:
-  release:
-     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Hardware-linked release tag, for example htgdo-v2.4.2-homekit-1"
+        required: true
+        type: string
+      platformio_version:
+        description: "PlatformIO version used for the release build"
+        required: false
+        default: "6.1.19"
+        type: string
 
-permissions:
-  actions: write
+concurrency:
+  group: release-${{ inputs.release_tag }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    permissions:
-      contents: write
+  preflight:
+    name: Release preflight
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
+    outputs:
+      release_tag: ${{ steps.inputs.outputs.release_tag }}
+      platformio_version: ${{ steps.inputs.outputs.platformio_version }}
     steps:
-      - name: Checkout code
+      - name: Checkout source code
         uses: actions/checkout@v4
         with:
-            submodules: true
+          fetch-depth: 0
 
-      - name: Tag
-        id: tag
-        uses: JinoArch/get-latest-tag@latest
+      - name: Validate release inputs
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PLATFORMIO_VERSION: ${{ inputs.platformio_version }}
+        run: |
+          set -euo pipefail
 
-      - name: Update version on manifest.json
-        uses: amochkin/action-json@v1
-        id: write_version
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Release workflow must be run from main. Current ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          if ! [[ "${RELEASE_TAG}" =~ ^htgdo-v2\.4\.2-homekit-[0-9]+$ ]]; then
+            echo "Release tag must match htgdo-v2.4.2-homekit-N. Got: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release already exists: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          echo "release_tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "platformio_version=${PLATFORMIO_VERSION}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    needs: preflight
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
         with:
-          mode: write
-          file: docs/manifest.json
-          property: version
-          value: ${{ steps.tag.outputs.latestTag }}
-          value_type: string
+          submodules: true
 
-      - name: Update firmware/*.bootloader.bin version on manifest.json
-        uses: amochkin/action-json@v1
-        id: builds_parts_path_0
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          mode: write
-          file: docs/manifest.json
-          property: builds.0.parts.0.path
-          value: firmware/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.bootloader.bin
-          value_type: string
+          python-version: "3.11"
+          cache: pip
 
-      - name: Update firmware/*.partitions.bin version on manifest.json
-        uses: amochkin/action-json@v1
-        id: builds_parts_path_1
-        with:
-          mode: write
-          file: docs/manifest.json
-          property: builds.0.parts.1.path
-          value: firmware/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.partitions.bin
-          value_type: string
-
-      - name: Update firmware/*.bin version on manifest.json
-        uses: amochkin/action-json@v1
-        id: builds_parts_path_3
-        with:
-          mode: write
-          file: docs/manifest.json
-          property: builds.0.parts.3.path
-          value: firmware/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.bin
-          value_type: string
-          
-      - name: Output created (or overwritten) manifest.json
-        run: cat docs/manifest.json
-        shell: bash
-        
-      - name: Output read value of 'version' & `parts` property
-        run: echo ${{ steps.write_version.outputs.value }} ${{ steps.builds_parts_path_0.outputs.value }} ${{ steps.builds_parts_path_1.outputs.value }} ${{ steps.builds_parts_path_3.outputs.value }}
-        shell: bash
-
-      - name: Attach manifest.json
-        uses: AButler/upload-release-assets@v3.0
-        with:
-          files: "/home/runner/work/homekit-ratgdo32/homekit-ratgdo32/docs/manifest.json"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: ${{ steps.tag.outputs.latestTag }}
-
-      - name: Upload Release manifest.json
-        uses: wow-actions/download-upload@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          url: https://github.com/ratgdo/homekit-ratgdo32/releases/download/${{ steps.tag.outputs.latestTag }}/manifest.json
-          dir: docs/
-          commit_message: "Upload Latest manifest.json for ${{ steps.tag.outputs.latestTag }}"
-
-      - uses: actions/cache@v3
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/pip
             ~/.platformio/.cache
-          key: ${{ runner.os }}-pio
+          key: ${{ runner.os }}-platformio-${{ needs.preflight.outputs.platformio_version }}
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-  
-      - name: Install PlatformIO Core
+      - name: Install PlatformIO
         run: |
-            pip install --upgrade pip
-            pip install --upgrade platformio
+          python -m pip install --upgrade pip
+          python -m pip install "platformio==${{ needs.preflight.outputs.platformio_version }}"
 
-      - name: Build PlatformIO Project
+      - name: Set build version
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          jq --arg version "${RELEASE_TAG}" '.version = $version' docs/manifest.json > docs/manifest.tmp
+          mv docs/manifest.tmp docs/manifest.json
+
+      - name: Build firmware
         run: pio run -e ratgdo_esp32dev
 
-      - name : md5sum Firmware.bin
+      - name: Prepare release and Pages assets
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
         run: |
-          cd .pio/build/ratgdo_esp32dev
-          md5sum firmware.bin | awk '{print $1}' > firmware.md5
+          set -euo pipefail
 
-      - name: Rename Firmware Files
-        run: |
-          mv .pio/build/ratgdo_esp32dev/firmware.bin .pio/build/ratgdo_esp32dev/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.bin
-          mv .pio/build/ratgdo_esp32dev/bootloader.bin .pio/build/ratgdo_esp32dev/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.bootloader.bin
-          mv .pio/build/ratgdo_esp32dev/partitions.bin .pio/build/ratgdo_esp32dev/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.partitions.bin
-          mv .pio/build/ratgdo_esp32dev/firmware.elf .pio/build/ratgdo_esp32dev/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.elf
-          mv .pio/build/ratgdo_esp32dev/firmware.md5 .pio/build/ratgdo_esp32dev/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.md5
+          BUILD_DIR=".pio/build/ratgdo_esp32dev"
+          mkdir -p output/firmware pages/firmware release_assets
 
-      - name: Attach Bundle - firmware.bin
-        uses: AButler/upload-release-assets@v3.0
+          cp "${BUILD_DIR}/firmware.bin" "output/firmware/${RELEASE_TAG}.firmware.bin"
+          cp "${BUILD_DIR}/bootloader.bin" "output/firmware/${RELEASE_TAG}.bootloader.bin"
+          cp "${BUILD_DIR}/partitions.bin" "output/firmware/${RELEASE_TAG}.partitions.bin"
+          cp "${BUILD_DIR}/firmware.elf" "release_assets/${RELEASE_TAG}.elf"
+          cp "${BUILD_DIR}/firmware.factory.bin" "release_assets/${RELEASE_TAG}.factory.bin"
+          cp docs/firmware/boot_app0.bin output/firmware/boot_app0.bin
+
+          md5sum "output/firmware/${RELEASE_TAG}.firmware.bin" | awk '{print $1}' > "output/firmware/${RELEASE_TAG}.firmware.md5"
+
+          jq -n \
+            --arg version "${RELEASE_TAG}" \
+            --arg bootloader "firmware/${RELEASE_TAG}.bootloader.bin" \
+            --arg partitions "firmware/${RELEASE_TAG}.partitions.bin" \
+            --arg firmware "firmware/${RELEASE_TAG}.firmware.bin" \
+            '{
+              "name": "homekit-ratgdo",
+              "version": $version,
+              "new_install_prompt_erase": true,
+              "new_install_improv_wait_time": 60,
+              "builds": [
+                {
+                  "chipFamily": "ESP32",
+                  "parts": [
+                    {"path": $bootloader, "offset": 4096},
+                    {"path": $partitions, "offset": 32768},
+                    {"path": "firmware/boot_app0.bin", "offset": 57344},
+                    {"path": $firmware, "offset": 65536}
+                  ]
+                }
+              ]
+            }' > output/manifest.json
+
+          find docs -maxdepth 1 -type f -exec cp {} pages/ \;
+          [ -d docs/ota ] && cp -R docs/ota pages/
+          [ -d docs/webpage ] && cp -R docs/webpage pages/
+          [ -d docs/logs ] && cp -R docs/logs pages/
+          cp output/manifest.json pages/manifest.json
+          cp output/firmware/* pages/firmware/
+
+          cp output/manifest.json release_assets/manifest.json
+          cp output/firmware/* release_assets/
+
+          (
+            cd release_assets
+            find . -type f \( -name '*.bin' -o -name '*.elf' -o -name '*.md5' -o -name 'manifest.json' \) -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+          )
+          cp release_assets/SHA256SUMS pages/SHA256SUMS
+
+          {
+            echo "# HTGDO-v2.4.2 HomeKit ${RELEASE_TAG}"
+            echo ""
+            echo "- Source commit: ${GITHUB_SHA}"
+            echo "- PlatformIO version: ${{ needs.preflight.outputs.platformio_version }}"
+            echo "- Release tag: ${RELEASE_TAG}"
+            echo ""
+            echo "## SHA256SUMS"
+            echo ""
+            echo '```text'
+            cat pages/SHA256SUMS
+            echo '```'
+          } > release_assets/release-notes.md
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          files: ".pio/build/ratgdo_esp32dev/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.bin"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: ${{ steps.tag.outputs.latestTag }}
-      
-      - name: Upload Release Asset - firmware.bin
-        uses: wow-actions/download-upload@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          url: https://github.com/ratgdo/homekit-ratgdo32/releases/download/${{ steps.tag.outputs.latestTag }}/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.bin
-          dir: docs/firmware/
-          commit_message: "Upload Latest Firmware: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.bin"
-    
-      - name: Upload firmware.bin
+          path: pages
+
+      - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.bin
-          path: |
-            .pio/build/ratgdo_esp32dev/*.firmware.bin
+          name: release-assets
+          path: release_assets
 
-      - name: Download firmware.bin
+  deploy:
+    name: Deploy Web Installer
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - preflight
+      - deploy
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
         uses: actions/download-artifact@v4
         with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.bin
-          path: |
-            docs/firmware/
+          name: release-assets
+          path: release_assets
 
-      - name: Attach Bundle - bootloader.bin
-        uses: AButler/upload-release-assets@v3.0
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
-          files: ".pio/build/ratgdo_esp32dev/*.bootloader.bin"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: ${{ steps.tag.outputs.latestTag }}
-        
-      - name: Upload Release Asset - bootloader.bin
-        uses: wow-actions/download-upload@v1
-        with:
+          tag_name: ${{ needs.preflight.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          name: HTGDO-v2.4.2 HomeKit ${{ needs.preflight.outputs.release_tag }}
+          body_path: release_assets/release-notes.md
+          draft: false
+          prerelease: false
+          files: |
+            release_assets/*.bin
+            release_assets/*.elf
+            release_assets/*.md5
+            release_assets/manifest.json
+            release_assets/SHA256SUMS
+        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          url: https://github.com/ratgdo/homekit-ratgdo32/releases/download/${{ steps.tag.outputs.latestTag }}/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.bootloader.bin
-          dir: docs/firmware/
-          commit_message: "Upload Latest bootloader: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.bootloader.bin"
-    
-      - name: Upload bootloader.bin
-        uses: actions/upload-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.bootloader.bin
-          path: |
-            .pio/build/ratgdo_esp32dev/*.bootloader.bin
-
-      - name: Download bootloader.bin
-        uses: actions/download-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.bootloader.bin
-          path: |
-            docs/firmware/
-
-      - name: Attach Bundle - partitions.bin
-        uses: AButler/upload-release-assets@v3.0
-        with:
-          files: ".pio/build/ratgdo_esp32dev/*.partitions.bin"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: ${{ steps.tag.outputs.latestTag }}
-      
-      - name: Upload Release Asset - partitions.bin
-        uses: wow-actions/download-upload@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          url: https://github.com/ratgdo/homekit-ratgdo32/releases/download/${{ steps.tag.outputs.latestTag }}/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.partitions.bin
-          dir: docs/firmware/
-          commit_message: "Upload Latest partitions: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.partitions.bin"
-    
-      - name: Upload partitions.bin
-        uses: actions/upload-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.partitions.bin
-          path: |
-            .pio/build/ratgdo_esp32dev/*.partitions.bin
-
-      - name: Download partitions.bin
-        uses: actions/download-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.partitions.bin
-          path: |
-            docs/firmware/
-            
-      - name: Attach Bundle - Firmware.md5
-        uses: AButler/upload-release-assets@v3.0
-        with:
-          files: ".pio/build/ratgdo_esp32dev/*.firmware.md5"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: ${{ steps.tag.outputs.latestTag }}
-    
-      - name: Upload Release Asset - firmware.md5
-        uses: wow-actions/download-upload@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          url: https://github.com/ratgdo/homekit-ratgdo32/releases/download/${{ steps.tag.outputs.latestTag }}/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.md5
-          dir: docs/firmware/
-          commit_message: "Upload Latest md5: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.md5"
-    
-      - name: Upload firmware.md5
-        uses: actions/upload-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.md5
-          path: |
-            .pio/build/ratgdo_esp32dev/*.firmware.md5
-
-      - name: Download firmware.md5
-        uses: actions/download-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.firmware.md5
-          path: |
-            docs/firmware/
-  
-      - name: Attach Bundle - Firmware.elf
-        uses: AButler/upload-release-assets@v3.0
-        with:
-          files: ".pio/build/ratgdo_esp32dev/*.elf"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: ${{ steps.tag.outputs.latestTag }}
-
-      - name: Upload Release Asset - Firmware.elf
-        uses: wow-actions/download-upload@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          url: https://github.com/ratgdo/homekit-ratgdo32/releases/download/${{ steps.tag.outputs.latestTag }}/homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.elf 
-          dir: docs/firmware/
-          commit_message: "Upload Latest Firmware: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.elf"
-    
-      - name: Upload Firmware.elf
-        uses: actions/upload-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.elf
-          path: |
-            .pio/build/ratgdo_esp32dev/*.elf
-
-      - name: Download Firmware.elf
-        uses: actions/download-artifact@v4
-        with:
-          name: homekit-ratgdo32-${{ steps.tag.outputs.latestTag }}.elf
-          path: |
-            docs/firmware/
-
-      - name: Sleep for 2 minutes before pubhsing to Discord
-        run: sleep 120s
-        shell: bash
-
-      - name: Latest Release
-        if: ${{ github.event.release.prerelease == false }}
-        uses: SethCohen/github-releases-to-discord@v1.13.1
-        with:
-          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          color: "5723991"
-          username: "ratgdo"
-          avatar_url: "https://avatars.githubusercontent.com/u/144837877?s=200&v=4"
-          footer_title: "homekit-ratgdo32"
-          footer_icon_url: "https://avatars.githubusercontent.com/u/144837877?s=200&v=4"
-          footer_timestamp: true
-          
-      - name: Pre-Release
-        if: ${{ github.event.release.prerelease == true }}
-        uses: SethCohen/github-releases-to-discord@v1.13.1
-        with:
-          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          color: "5723991"
-          username: "ratgdo"
-          avatar_url: "https://avatars.githubusercontent.com/u/144837877?s=200&v=4"
-          footer_title: "Pre-Release: homekit-ratgdo32"
-          footer_icon_url: "https://avatars.githubusercontent.com/u/144837877?s=200&v=4"
-          footer_timestamp: true  
