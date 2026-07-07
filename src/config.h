@@ -133,6 +133,7 @@ struct configStr
 
 struct configSetting
 {
+    const char *key;
     bool reboot;
     bool wifiChanged;
     std::variant<bool, int, configStr> value;
@@ -145,8 +146,8 @@ void applyTimezoneWithNTP(const char *ntpServer);
 class userSettings
 {
 private:
-    std::map<std::string, configSetting> settings;
     static userSettings *instancePtr;
+    configSetting *settings;
     userSettings();
     void toFile(Print &file);
 #ifndef ESP8266
@@ -157,12 +158,11 @@ public:
     userSettings(const userSettings &obj) = delete;
     static userSettings *getInstance() { return instancePtr; }
 
-    bool contains(const std::string &key);
     bool set(const std::string &key, const bool value);
     bool set(const std::string &key, const int value);
     bool set(const std::string &key, const char *value);
     std::variant<bool, int, configStr> get(const std::string &key);
-    configSetting getDetail(const std::string &key);
+    configSetting *getDetail(const std::string &key);
     void toStdOut();
     void save();
     void load();
