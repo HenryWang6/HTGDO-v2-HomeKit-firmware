@@ -273,6 +273,22 @@ void IRAM_ATTR isr_obstruction()
     obstruction_sensor.low_count++;
 }
 
+static void update_obstruction_from_message(bool obstructed, const char *source)
+{
+    if (garage_door.obstructed == obstructed)
+    {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Obstruction: %s (%s) (%s)", obstructed ? "Obstructed" : "Clear", source, timeString());
+    notify_homekit_obstruction(obstructed);
+    digitalWrite(STATUS_OBST_PIN, !obstructed);
+    if (obstructed && motionTriggers.bit.obstruction)
+    {
+        notify_homekit_motion(true);
+    }
+}
+
 // Becomes set from ISR / IRQ callback function.
 static bool rxPending;
 void IRAM_ATTR receiveHandler()
@@ -1385,10 +1401,7 @@ void sec1_process_message(uint8_t key, uint8_t value = 0xFF)
                 bool status_motion = bitRead(value, 2);
                 if (garage_door.obstructed != status_obstructed)
                 {
-                    // Obstruction state changed
-                    ESP_LOGI(TAG, "Obstruction: %s (Status packet) (%s)", status_obstructed ? "Obstructed" : "Clear", timeString());
-                    notify_homekit_obstruction(status_obstructed);
-                    digitalWrite(STATUS_OBST_PIN, !status_obstructed);
+                    update_obstruction_from_message(status_obstructed, "Status packet");
                 }
                 if (motionTriggers.bit.obstruction && status_motion)
                 {
@@ -1830,13 +1843,7 @@ void comms_loop_sec2()
                 bool status_obstructed = !pkt.m_data.value.status.obstruction;
                 if (garage_door.obstructed != status_obstructed)
                 {
-                    ESP_LOGD(TAG, "Obstruction: %s (Status packet) (%s)", status_obstructed ? "Obstructed" : "Clear", timeString());
-                    notify_homekit_obstruction(status_obstructed);
-                    digitalWrite(STATUS_OBST_PIN, !status_obstructed);
-                    if (status_obstructed && motionTriggers.bit.obstruction)
-                    {
-                        notify_homekit_motion(true);
-                    }
+                    update_obstruction_from_message(status_obstructed, "Status packet");
                 }
             }
 
@@ -2153,6 +2160,14 @@ void comms_loop_sec2()
             case Pair3State::UpdateAck:
                 break;
             case Pair3State::CancelAck:
+                if (garage_door.obstructed)
+                {
+                    update_obstruction_from_message(false, "PAIR_3_RESP");
+                }
+                else
+                {
+                    ESP_LOGD(TAG, "Ignoring ambiguous PAIR_3_RESP clear while obstruction is already clear");
+                }
                 break;
             case Pair3State::WarningStart:
                 // ESP_LOGI(TAG, "Door close warning sequence start");
@@ -2161,6 +2176,7 @@ void comms_loop_sec2()
                 // ESP_LOGI(TAG, "Door close warning sequence end");
                 break;
             case Pair3State::ObstBlocked:
+                update_obstruction_from_message(true, "PAIR_3_RESP");
                 break;
             }
             break;

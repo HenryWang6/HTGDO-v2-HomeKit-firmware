@@ -459,7 +459,7 @@ userSettings::userSettings()
         {cfg_dcBypassTTC, {false, false, false, NULL}},
         {cfg_useToggle, {false, false, false, NULL}},
         {cfg_dcDebounceDuration, {true, false, 50, NULL}},
-        {cfg_obstFromStatus, {true, false, false, NULL}},
+        {cfg_obstFromStatus, {true, false, true, NULL}},
 #ifdef RATGDO32_DISCO
         {cfg_vehicleThreshold, {false, false, 100, helperVehicleThreshold}},                // call fn to set globals
         {cfg_vehicleHomeKit, {false, false, false, helperVehicleHomeKit}},                  // call fn to enable/disable HomeKit accessories
