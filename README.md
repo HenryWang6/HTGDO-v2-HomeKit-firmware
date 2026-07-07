@@ -98,7 +98,7 @@ Status of the garage door along with action buttons are shown in this section. T
 
 If you have a Security+ 1.0 door then you may see the word _(emulation)_ next to the door protocol. This indicates that you do not have a digital wall panel and the ratgdo is emulating this.
 
-Next to the obstruction status you will see the word _(Pin-based)_ or _(Message)_ that indicates how ratgdo is detecting whether there is an obstruction that may prevent the door from closing. By default, ratgdo will attempt to use the pin-based method and only fall back to using the garage door status messages if no signal is detected on the obstruction sensor wire.  You can force ratgdo to use status messages, see below.
+Next to the obstruction status you will see the word _(Pin-based)_ or _(Message)_ that indicates how ratgdo is detecting whether there is an obstruction that may prevent the door from closing. By default, new or erased configurations use garage door status messages. You can disable this setting to attempt pin-based detection instead.
 
 For Security+ 2.0 doors, the number of times the door has been opened and closed is shown as _Cycle Count_ and, if equipped, the status of the emergency backup battery.
 
@@ -264,7 +264,7 @@ For Security+ 1.0 and Security+ 2.0, communications with the garage door uses a 
 
 ### Get obstruction from GDO status messages
 
-By default ratgdo obtains obstruction state by monitoring signals on the sensor wire. The door also reports status in messages sent by the GDO and ratgdo will fall back to use status messages if no signal is detected on the wire. Selecting this option will force the ratgdo to always use status messages. Note that the messages method can be slow to report a change in obstruction state.
+By default, new or erased configurations obtain obstruction state from messages sent by the GDO. Clearing this option attempts pin-based detection from the obstruction sensor wire instead. Status-message reporting can be slower for normal status packets, but Security+ 2.0 obstruction changes are also updated from pair-response messages when available.
 
 ### WiFi Version _(not supported on ratgdo32 boards)_
 
