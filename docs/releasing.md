@@ -6,13 +6,13 @@ GitHub Actions workflow.
 Use a hardware-linked release tag:
 
 ```text
-htgdo-v2.4.2-homekit-N
+htgdo-v2.2-homekit-N
 ```
 
 For example:
 
 ```text
-htgdo-v2.4.2-homekit-1
+htgdo-v2.2-homekit-1
 ```
 
 The workflow must be run from `main`. It builds the PlatformIO firmware, creates
