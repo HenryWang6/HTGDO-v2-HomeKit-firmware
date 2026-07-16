@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Hardware-linked release tag, for example htgdo-v2.4.2-homekit-1"
+        description: "Hardware-linked release tag, for example htgdo-v2.2-homekit-1"
         required: true
         type: string
       platformio_version:
@@ -46,8 +46,8 @@ jobs:
             exit 1
           fi
 
-          if ! [[ "${RELEASE_TAG}" =~ ^htgdo-v2\.4\.2-homekit-[0-9]+$ ]]; then
-            echo "Release tag must match htgdo-v2.4.2-homekit-N. Got: ${RELEASE_TAG}" >&2
+          if ! [[ "${RELEASE_TAG}" =~ ^htgdo-v2\.2-homekit-[0-9]+$ ]]; then
+            echo "Release tag must match htgdo-v2.2-homekit-N. Got: ${RELEASE_TAG}" >&2
             exit 1
           fi
 
@@ -164,7 +164,7 @@ jobs:
           cp release_assets/SHA256SUMS pages/SHA256SUMS
 
           {
-            echo "# HTGDO-v2.4.2 HomeKit ${RELEASE_TAG}"
+            echo "# HTGDO-v2.2 HomeKit ${RELEASE_TAG}"
             echo ""
             echo "- Source commit: ${GITHUB_SHA}"
             echo "- PlatformIO version: ${{ needs.preflight.outputs.platformio_version }}"
@@ -226,7 +226,7 @@ jobs:
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
-          name: HTGDO-v2.4.2 HomeKit ${{ needs.preflight.outputs.release_tag }}
+          name: HTGDO-v2.2 HomeKit ${{ needs.preflight.outputs.release_tag }}
           body_path: release_assets/release-notes.md
           draft: false
           prerelease: false
