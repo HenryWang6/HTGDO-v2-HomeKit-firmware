@@ -689,8 +689,11 @@ void load_page(const char *page)
     bool cache = false;
     char cacheHdr[24] = "no-cache, no-store";
     char matchHdr[8] = "";
+    // HTML carries the content-CRC URLs for JavaScript and CSS. It must be
+    // revalidated after a firmware update so the browser discovers new asset
+    // URLs instead of running a cached page from the previous firmware.
     if ((CACHE_CONTROL > 0) &&
-        (!strcmp_P(type, type_css) || !strcmp_P(type, type_html) || !strcmp_P(type, type_js) || strstr_P(type, PSTR("image"))))
+        (!strcmp_P(type, type_css) || !strcmp_P(type, type_js) || strstr_P(type, PSTR("image"))))
     {
         snprintf_P(cacheHdr, sizeof(cacheHdr), PSTR("max-age=%d"), CACHE_CONTROL);
         cache = true;

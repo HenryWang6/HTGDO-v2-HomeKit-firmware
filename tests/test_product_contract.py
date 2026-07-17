@@ -107,6 +107,18 @@ class ProductContractTests(unittest.TestCase):
         self.assertNotIn("https://ratgdo.github.io/", functions)
         self.assertNotIn("serverStatus.firmwareVersion < latest.tag_name", functions)
 
+    def test_html_is_not_long_term_cached_across_firmware_updates(self):
+        web = (ROOT / "src/web.cpp").read_text()
+        cache_condition = web.split("if ((CACHE_CONTROL > 0)", 1)[1].split(
+            "if (server.hasHeader", 1
+        )[0]
+
+        self.assertIn("type_css", cache_condition)
+        self.assertIn("type_js", cache_condition)
+        self.assertIn('PSTR("image")', cache_condition)
+        self.assertNotIn("type_html", cache_condition)
+        self.assertIn('char cacheHdr[24] = "no-cache, no-store"', web)
+
     def test_exact_release_version_fits_crash_diagnostics(self):
         log = (ROOT / "src/log.cpp").read_text()
 
