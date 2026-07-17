@@ -129,7 +129,7 @@ RTC_NOINIT_ATTR time_t crashTime;
 RTC_NOINIT_ATTR _millis_t crashUpTime;
 RTC_NOINIT_ATTR int32_t crashCount;
 RTC_NOINIT_ATTR char reasonString[64];
-RTC_NOINIT_ATTR char crashVersion[16];
+RTC_NOINIT_ATTR char crashVersion[32];
 RTC_NOINIT_ATTR volatile uint32_t resetMagic;
 #define RESET_MAGIC 0xDEADBEEF // Thankyou google AI for the suggestion.
 const int rtcSize = sizeof(rtcRebootLog) + sizeof(rtcCrashLog) + sizeof(rebootTime) + sizeof(rebootUpTime) + sizeof(crashTime) + sizeof(crashUpTime) +
@@ -342,7 +342,7 @@ void LOG::printCrashLog(Print &outputDev)
                 outputDev.printf("Crash in task: %s, at address: 0x%08lX\n", summary->exc_task, summary->exc_pc);
                 outputDev.print("Decode backtrace with this Linux command:\n\n");
                 if (crashCount > 0)
-                    outputDev.printf("addr2line -p -f -C -e homekit-ratgdo32-v%s.elf \\\n", crashVersion);
+                    outputDev.printf("addr2line -p -f -C -e %s.elf \\\n", crashVersion);
                 else
                     outputDev.print("addr2line -p -f -C -e firmware.elf \\\n");
                 outputDev.print(" -a ");

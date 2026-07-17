@@ -21,8 +21,8 @@ var setGDOcmds = {              // setGDO commands that are not sent from server
     factoryReset: false,
     resetEncoderCal: false,
 };
-var gitUser = "ratgdo";         // default git user.
-var gitRepo = "homekit-ratgdo"; // default git repository.
+var gitUser = "HenryWang6";                       // default git user.
+var gitRepo = "HTGDO-v2-HomeKit-firmware";       // default git repository.
 
 // See... https://github.com/nayarsystems/posix_tz_db
 // This is CSV form of the data, available at this web page.
@@ -369,6 +369,9 @@ function setElementsFromStatus(status) {
     }
     for (const [key, value] of Object.entries(status)) {
         switch (key) {
+            case "gitUser":
+                gitUser = value;
+                break;
             case "gitRepo":
                 gitRepo = value;
                 document.getElementById("docsLink").href = "https://github.com/" + gitUser + "/" + gitRepo;
@@ -809,9 +812,6 @@ async function checkStatus() {
                     console.log(`Status text: ${text}`);
                 }
                 serverStatus = { ...serverStatus, ...setGDOcmds }; // merge-in setGDO command constants
-                // Add letter 'v' to front of returned firmware version.
-                // Hack because firmware uses v0.0.0 and 0.0.0 for different purposes.
-                serverStatus.firmwareVersion = "v" + serverStatus.firmwareVersion;
                 setElementsFromStatus(serverStatus);
                 checkVersion(); // call this only after we have retrieved status from server
             })
@@ -910,65 +910,46 @@ async function checkVersion(progress = "dotdot1") {
     versionElem2.innerHTML = msg;
     const spanDots = document.getElementById(progress);
     const aniDots = dotDotDot(spanDots);
-    const response = await fetch("https://api.github.com/repos/" + gitUser + "/" + gitRepo + "/releases", {
-        method: "GET",
-        cache: "no-cache",
-        redirect: "follow"
-    });
-    const releases = await response.json();
-    if (response.status !== 200) {
-        // We have probably hit the GitHub API rate limits (60 per hour for non-authenticated)
-        versionElem.innerHTML = "";
-        versionElem2.innerHTML = "";
-        console.warn("Error retrieving status from GitHub" + releases.message);
-        return;
-    }
+    try {
+        const response = await fetch("https://api.github.com/repos/" + gitUser + "/" + gitRepo + "/releases", {
+            method: "GET",
+            cache: "no-cache",
+            redirect: "follow"
+        });
+        const releases = await response.json();
+        if (!response.ok) {
+            throw new Error(releases?.message || `GitHub returned HTTP ${response.status}`);
+        }
 
-    // make sure we have newest release first
-    let prerelease = document.getElementById("prerelease").checked;
-    const latest = releases
-        .sort((a, b) => {
-            return Date.parse(b.created_at) - Date.parse(a.created_at);
-        })
-        .find((obj) => {
-            // if prerelease allowed, select first object.  Else select first object that not a prerelease.
-            return (prerelease || !obj.prerelease);
-        });
-    serverStatus.latestVersion = latest;
-    if (latest) {
-        console.log("Newest version: " + latest.tag_name);
-        const asset = latest.assets.find((obj) => {
-            if (gitRepo == "homekit-ratgdo32") {
-                return (obj.content_type === "application/octet-stream") && (obj.name.startsWith(gitRepo) && (obj.name.includes("firmware")));
-            } else {
-                return (obj.content_type === "application/octet-stream") && (obj.name.startsWith(gitRepo));
-            }
-        });
-        if (latest?.body) {
+        const includePrerelease = document.getElementById("prerelease").checked;
+        const latest = HTGDORelease.selectLatestRelease(releases, includePrerelease);
+        const assets = HTGDORelease.selectOtaAssets(latest);
+        if (!latest || !assets) {
+            throw new Error("No complete HTGDO-v2 HomeKit OTA release was found");
+        }
+
+        serverStatus.latestVersion = latest;
+        serverStatus.downloadURL = assets.ota.browser_download_url;
+        serverStatus.md5URL = assets.md5.browser_download_url;
+        if (latest.body) {
             document.getElementById("firmwareDescription").innerHTML = marked.parse(latest.body);
         }
-        if (asset?.name) {
-            serverStatus.downloadURL = "https://ratgdo.github.io/" + gitRepo + "/firmware/" + asset.name;
-            msg = "You have newest release";
-            if (serverStatus.firmwareVersion < latest.tag_name) {
-                // Newest version at GitHub is greater from that installed
-                msg = "Update available  (" + latest.tag_name + ")";
-            }
-        } else {
-            console.warn("No firmware matching CPU architecture found");
-            serverStatus.downloadURL = undefined;
-            msg = "No firmware found";
-        }
-    }
-    else {
-        console.log("No firmware found");
+        msg = HTGDORelease.isUpdateAvailable(serverStatus.firmwareVersion, latest.tag_name)
+            ? `Update available  (${latest.tag_name})`
+            : "You have newest release";
+        versionElem2.innerHTML = latest.tag_name;
+    } catch (error) {
+        console.warn(`Unable to retrieve a valid firmware release: ${error}`);
+        serverStatus.latestVersion = undefined;
         serverStatus.downloadURL = undefined;
+        serverStatus.md5URL = undefined;
         msg = "No firmware found";
+        versionElem2.innerHTML = msg;
+    } finally {
+        clearInterval(aniDots);
+        spanDots.innerHTML = "";
+        versionElem.innerHTML = msg;
     }
-    clearInterval(aniDots);
-    spanDots.innerHTML = "";
-    versionElem.innerHTML = msg;
-    versionElem2.innerHTML = (latest?.tag_name) ? latest.tag_name : msg;
 }
 
 // repurposes the myModal <div> to display a countdown timer
@@ -1038,9 +1019,11 @@ async function firmwareUpdate(github = true) {
             }
             console.log("Download firmware from: " + serverStatus.downloadURL);
             document.getElementById("updateMsg").innerHTML = "Do not close browser until update completes. Device will reboot when complete.<br><br>Downloading from GitHub...";
-            // For GitHub we will check integrity of downloaded file with MD5 hash.
-            const regex = /\.bin$/;
-            let response = await fetch(serverStatus.downloadURL.replace(regex, ".md5"), {
+            // For GitHub we require the release's exact MD5 sidecar.
+            if (!serverStatus.md5URL) {
+                throw new Error("Firmware MD5 checksum URL is missing");
+            }
+            let response = await fetch(serverStatus.md5URL, {
                 method: "GET",
                 cache: "no-cache",
                 redirect: "follow",
@@ -1048,19 +1031,14 @@ async function firmwareUpdate(github = true) {
                     "Accept": "text/plain",
                 },
             });
-            if (response.status != 200) {
-                if (confirm("Firmware MD5 checksum file not found on GitHub. Continue update process anyway?")) {
-                    console.log("Firmware MD5 checksum file missing, user requested continue anyway.");
-                    expectedMD5 = "";
-                } else {
-                    console.log(`Firmware update canceled as MD5 checksum file missing`);
-                    return;
-                }
+            if (!response.ok) {
+                throw new Error(`Firmware MD5 checksum download failed: HTTP ${response.status}`);
             }
-            else {
-                expectedMD5 = (await response.text()).trim().toLowerCase();
-                console.log(`Expected firmware MD5: ${expectedMD5}`);
+            expectedMD5 = (await response.text()).trim().toLowerCase();
+            if (!/^[0-9a-f]{32}$/.test(expectedMD5)) {
+                throw new Error("Firmware MD5 checksum has an invalid format");
             }
+            console.log(`Expected firmware MD5: ${expectedMD5}`);
             response = await fetch(serverStatus.downloadURL, {
                 method: "GET",
                 cache: "no-cache",
@@ -1069,12 +1047,13 @@ async function firmwareUpdate(github = true) {
                     "Accept": "application/octet-stream",
                 },
             });
+            if (!response.ok) {
+                throw new Error(`Firmware download failed: HTTP ${response.status}`);
+            }
             bin = await response.arrayBuffer();
             binMD5 = MD5(new Uint8Array(bin));
-            if ((expectedMD5 != "") && (expectedMD5 != binMD5)) {
-                console.log(`Firmware MD5: ${binMD5}`);
-                alert("Received firmware MD5 does not match expected MD5. Firmware update aborted.");
-                return;
+            if (expectedMD5 != binMD5) {
+                throw new Error(`Firmware MD5 mismatch: received ${binMD5}`);
             }
         } else {
             // For local filesystem we will not require a MD5 checksum file check.
@@ -1123,6 +1102,11 @@ async function firmwareUpdate(github = true) {
         // Upload and verify succeeded, so reboot...
         rebootRATGDO(false);
         rebootMsg = "Update complete...";
+    }
+    catch (error) {
+        console.error(`Firmware update aborted: ${error}`);
+        alert(`Firmware update aborted: ${error.message || error}`);
+        showRebootMsg = false;
     }
     finally {
         clearInterval(aniDots);

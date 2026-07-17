@@ -5,25 +5,16 @@ do
     case "$1" in
         -v) VERBOSE="-vvv"
             ;;
-        upload) pio run -t upload -e ratgdo_esp32dev
+        upload) pio run -t upload -e htgdo_v2_esp32
             ;;
-        monitor) pio device monitor -e ratgdo_esp32dev
+        monitor) pio device monitor -e htgdo_v2_esp32
             ;;
-        run) pio run -e ratgdo_esp32dev $VERBOSE
+        run) pio run -e htgdo_v2_esp32 $VERBOSE
             ;;
-        test) pio test -e native $VERBOSE
-            ;;
-        release)
-            git tag $2
-            ./x.sh run
-            cp .pio/build/ratgdo_esp32dev/firmware.bin docs/firmware/homekit-ratgdo32-$(git describe --tag).firmware.bin
-            cp .pio/build/ratgdo_esp32dev/bootloader.bin docs/firmware/homekit-ratgdo32-$(git describe --tag).bootloader.bin
-            cp .pio/build/ratgdo_esp32dev/partitions.bin docs/firmware/homekit-ratgdo32-$(git describe --tag).partitions.bin
-            vi docs/manifest.json
-            git add docs
-            git commit -m "Release $2"
-            git push
-            git push --tag
+        test)
+            python3 -m unittest discover -s tests -p 'test_*.py' -v || exit 1
+            node --test tests/test_release_contract.js || exit 1
+            (cd lib/secplus && python3 -m unittest test_secplus.py) || exit 1
             ;;
         *) echo "usage: x.sh [-v] <upload|monitor|run|test>"
             exit 1

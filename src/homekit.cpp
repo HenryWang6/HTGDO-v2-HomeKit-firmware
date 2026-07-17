@@ -863,7 +863,7 @@ void setup_homekit()
     homeSpan.setConnectionCallback(connectionCallback);
     homeSpan.setStatusCallback(statusCallback);
 
-    homeSpan.begin(Category::Bridges, device_name, device_name_rfc952, "ratgdo-ESP32");
+    homeSpan.begin(Category::Bridges, device_name, device_name_rfc952, MODEL_NAME);
 
 #ifdef CONFIG_FREERTOS_USE_TRACE_FACILITY
     new SpanUserCommand('t', "- print FreeRTOS task info", printTaskInfo);
@@ -885,10 +885,7 @@ void setup_homekit()
     // Define the Garage Door accessory...
     new SpanAccessory(HOMEKIT_AID_GARAGE_DOOR);
     new DEV_Info(device_name);
-    new Characteristic::Manufacturer("Ratcloud llc");
     new Characteristic::SerialNumber(Network.macAddress().c_str());
-    new Characteristic::Model("ratgdo-ESP32");
-    new Characteristic::FirmwareRevision(AUTO_VERSION);
     door = new DEV_GarageDoor();
 
     // Dry contact (security type 3) cannot control lights
@@ -976,6 +973,10 @@ DEV_Info::DEV_Info(const char *name) : Service::AccessoryInformation()
 {
     new Characteristic::Identify();
     new Characteristic::Name(name);
+    new Characteristic::Manufacturer(MANUF_NAME);
+    new Characteristic::Model(MODEL_NAME);
+    new Characteristic::HardwareRevision(HARDWARE_REVISION);
+    new Characteristic::FirmwareRevision(HAP_FIRMWARE_VERSION);
 }
 
 boolean DEV_Info::update()

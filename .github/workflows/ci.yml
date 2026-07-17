@@ -15,15 +15,46 @@ env:
   PLATFORMIO_VERSION: "6.1.19"
 
 jobs:
-  build:
-    name: Build HomeKit firmware
+  test:
+    name: Run tests
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run product contract tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Run OTA release contract tests
+        run: node --test tests/test_release_contract.js
+
+      - name: Run secplus tests
+        working-directory: lib/secplus
+        run: python -m unittest test_secplus.py
+
+  build:
+    name: Build HomeKit firmware
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,4 +74,4 @@ jobs:
           python -m pip install "platformio==${PLATFORMIO_VERSION}"
 
       - name: Build firmware
-        run: pio run -e ratgdo_esp32dev
+        run: pio run -e htgdo_v2_esp32

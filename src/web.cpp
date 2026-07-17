@@ -175,7 +175,7 @@ const char *http_methods[] = {"HTTP_ANY", "HTTP_GET", "HTTP_HEAD", "HTTP_POST", 
 constexpr char gitUser[] = _GITUSER;
 constexpr char gitRepo[] = _GITREPO;
 constexpr char gitRawURL[] = "https://raw.githubusercontent.com/" _GITUSER "/" _GITREPO "/refs/heads/" _GITBRANCH;
-constexpr char gitTaggedURL[] = "https://raw.githubusercontent.com/" _GITUSER "/" _GITREPO "/refs/tags/v" AUTO_VERSION;
+constexpr char gitTaggedURL[] = "https://raw.githubusercontent.com/" _GITUSER "/" _GITREPO "/refs/tags/" AUTO_VERSION;
 
 // For Server Sent Events (SSE) support
 // Just reloading page causes register on new channel.  So we need a reasonable number
@@ -657,9 +657,10 @@ void load_page(const char *page)
         // js.map files, also known as JavaScript source maps, are files that provide a mapping between a minified, transpiled,
         // or bundled JavaScript file and its original, uncompressed source code. The browser only requests this if console/debugger
         // is opened. We do not store these locally (as large) and will redirect the browser to load from our GitHub repo.
-        if (!strcmp(gitUser, "ratgdo"))
+        if (strcmp(AUTO_VERSION, "dev"))
         {
-            // If we are building on ratgdo (for published release) then use tagged URL to make sure map file matches the one embedded in the firmware
+            // Published releases use the exact tag so the source map matches
+            // the JavaScript embedded in this firmware.
             strlcpy(writeBuffer, gitTaggedURL, sizeof(writeBuffer));
         }
         else
@@ -794,11 +795,16 @@ void build_status_json(char *json)
     // Build the JSON string
     _millis_t upTime = _millis();
     JSON_START(json);
+    JSON_ADD_STR("gitUser", gitUser);
     JSON_ADD_STR("gitRepo", gitRepo);
     JSON_ADD_INT("upTime", upTime);
     JSON_ADD_STR(cfg_deviceName, userConfig->getDeviceName());
     JSON_ADD_STR("userName", userConfig->getwwwUsername());
     JSON_ADD_BOOL("paired", homekit_is_paired());
+    JSON_ADD_STR("firmwareIdentity", FIRMWARE_IDENTITY);
+    JSON_ADD_STR("firmwareFamily", FIRMWARE_FAMILY);
+    JSON_ADD_STR("hardwareTarget", HARDWARE_TARGET);
+    JSON_ADD_STR("hardwareRevision", HARDWARE_REVISION);
     JSON_ADD_STR("firmwareVersion", std::string(AUTO_VERSION).c_str());
     JSON_ADD_STR(cfg_localIP, userConfig->getLocalIP());
     JSON_ADD_STR(cfg_subnetMask, userConfig->getSubnetMask());
@@ -940,9 +946,13 @@ void add_static_mdns()
     // Values that do not change during runtime
     ESP_LOGD(TAG, "Adding static mDNS TXT records");
     MDNS.addServiceTxt("ratgdo", "tcp", "model", MODEL_NAME);
+    MDNS.addServiceTxt("ratgdo", "tcp", "firmwareIdentity", FIRMWARE_IDENTITY);
+    MDNS.addServiceTxt("ratgdo", "tcp", "hardwareTarget", HARDWARE_TARGET);
+    MDNS.addServiceTxt("ratgdo", "tcp", "hardwareRevision", HARDWARE_REVISION);
     MDNS.addServiceTxt("ratgdo", "tcp", "firmwareVersion", AUTO_VERSION);
     MDNS.addServiceTxt("ratgdo", "tcp", "firmwareDate", __DATE__ " " __TIME__);
     MDNS.addServiceTxt("ratgdo", "tcp", cfg_deviceName, userConfig->getDeviceName());
+    MDNS.addServiceTxt("ratgdo", "tcp", "gitUser", gitUser);
     MDNS.addServiceTxt("ratgdo", "tcp", "gitRepo", gitRepo);
     MDNS.addServiceTxt("ratgdo", "tcp", "macAddress", WiFi.macAddress().c_str());
     MDNS.addServiceTxt("ratgdo", "tcp", "wifiSSID", WiFi.SSID().c_str());

@@ -162,7 +162,8 @@ void setup()
 #endif // ESP32
     // led on during setup
     led.on();
-    ESP_LOGI(TAG, "=== Starting RATGDO Homekit version %s", AUTO_VERSION);
+    ESP_LOGI(TAG, "=== Starting %s version %s", FIRMWARE_IDENTITY, AUTO_VERSION);
+    ESP_LOGI(TAG, "=== Hardware target %s revision %s", HARDWARE_TARGET, HARDWARE_REVISION);
 #ifdef ESP8266
     ESP_LOGI(TAG, "%s", ESP.getFullVersion().c_str());
     ESP_LOGI(TAG, "Flash chip size 0x%X", ESP.getFlashChipSize());

@@ -1,25 +1,21 @@
-import subprocess
-import json
-import os.path
+import os
+import sys
+from pathlib import Path
 
 Import("env")
 
-def get_firmware_specifier_build_flag(tag = ""):
-    f = open('./docs/manifest.json')
-    data = json.load(f)
-    f.close()
-    build_version = data['version'].replace('v', '', 1) #remove letter v from front of version string
-    build_flag = "-D AUTO_VERSION=\\\"" + build_version + tag +"\\\""
-    print ("Firmware Version: " + build_version + tag)
-    return (build_flag)
+project_dir = Path(env.subst("$PROJECT_DIR")).resolve()
+sys.path.insert(0, str(project_dir))
+from scripts.release_version import resolve_versions
 
 
-# look for "-D VERSION_TAG=" in build flags
-result = next((bflags for bflags in env.get("BUILD_FLAGS") if "-D VERSION_TAG=" in bflags), None)
-verTag = ""
-if result:
-    # create version tag "-xxx"
-    verTag = "-" + result.split("=")[1].strip('"')
+versions = resolve_versions(os.environ.get("HTGDO_RELEASE_TAG"))
+print(f"Firmware Version: {versions.release}")
+print(f"HomeKit Firmware Revision: {versions.hap}")
 
-# set AUTO_VERSION build flag with optional version tag appended
-env.Append(BUILD_FLAGS=[get_firmware_specifier_build_flag(verTag)])
+env.Append(
+    BUILD_FLAGS=[
+        f'-D AUTO_VERSION=\\"{versions.release}\\"',
+        f'-D HAP_FIRMWARE_VERSION=\\"{versions.hap}\\"',
+    ]
+)
