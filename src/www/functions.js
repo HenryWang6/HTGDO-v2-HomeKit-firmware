@@ -924,13 +924,17 @@ async function checkVersion(progress = "dotdot1") {
         const includePrerelease = document.getElementById("prerelease").checked;
         const latest = HTGDORelease.selectLatestRelease(releases, includePrerelease);
         const assets = HTGDORelease.selectOtaAssets(latest);
-        if (!latest || !assets) {
+        const downloadUrls = HTGDORelease.otaDownloadUrls(latest, gitUser, gitRepo);
+        if (!latest || !assets || !downloadUrls) {
             throw new Error("No complete HTGDO-v2 HomeKit OTA release was found");
         }
 
         serverStatus.latestVersion = latest;
-        serverStatus.downloadURL = assets.ota.browser_download_url;
-        serverStatus.md5URL = assets.md5.browser_download_url;
+        // GitHub release download redirects do not permit browser CORS reads.
+        // The release workflow publishes byte-identical copies to Pages, which
+        // provides the Access-Control-Allow-Origin header required here.
+        serverStatus.downloadURL = downloadUrls.ota;
+        serverStatus.md5URL = downloadUrls.md5;
         if (latest.body) {
             document.getElementById("firmwareDescription").innerHTML = marked.parse(latest.body);
         }

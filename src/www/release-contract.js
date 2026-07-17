@@ -44,6 +44,18 @@
         return { ota, md5 };
     }
 
+    function otaDownloadUrls(release, gitUser, gitRepo) {
+        const assets = selectOtaAssets(release);
+        if (!assets || !gitUser || !gitRepo) {
+            return null;
+        }
+        const pagesBase = `https://${gitUser}.github.io/${gitRepo}/`;
+        return {
+            ota: `${pagesBase}${assets.ota.name}`,
+            md5: `${pagesBase}${assets.md5.name}`,
+        };
+    }
+
     function isUpdateAvailable(installedVersion, releaseTag) {
         const installed = parseReleaseNumber(installedVersion);
         const available = parseReleaseNumber(releaseTag);
@@ -52,6 +64,7 @@
 
     return {
         isUpdateAvailable,
+        otaDownloadUrls,
         parseReleaseNumber,
         releasePattern,
         selectLatestRelease,
