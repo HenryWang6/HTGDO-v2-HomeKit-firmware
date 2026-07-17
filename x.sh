@@ -13,7 +13,7 @@ do
             ;;
         test)
             python3 -m unittest discover -s tests -p 'test_*.py' -v || exit 1
-            node --test tests/test_release_contract.js || exit 1
+            node --test tests/*.js || exit 1
             (cd lib/secplus && python3 -m unittest test_secplus.py) || exit 1
             ;;
         *) echo "usage: x.sh [-v] <upload|monitor|run|test>"

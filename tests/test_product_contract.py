@@ -52,6 +52,39 @@ class ProductContractTests(unittest.TestCase):
         self.assertNotIn("pio run -e ratgdo_esp32dev", workflow)
         self.assertNotIn("upload-artifact", workflow)
 
+    def test_release_workflow_separates_publish_and_promote(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+
+        self.assertIn("publish_prerelease", workflow)
+        self.assertIn("Promote existing prerelease", workflow)
+        self.assertIn("group: homekit-release", workflow)
+        self.assertIn('BUILD_ENVIRONMENT: htgdo_v2_esp32', workflow)
+        self.assertIn("submodules: recursive", workflow)
+        self.assertIn("--prerelease", workflow)
+        self.assertIn("--prerelease=false", workflow)
+        self.assertIn("needs:\n      - build\n      - create_prerelease", workflow)
+        self.assertNotIn("ratgdo_esp32dev", workflow)
+        self.assertNotIn("htgdo-v2.2-homekit", workflow)
+        self.assertNotIn("docs/manifest.json", workflow)
+        self.assertNotIn("platformio_version:", workflow)
+
+    def test_public_installer_is_htgdo_only_and_version_pinned(self):
+        index = (ROOT / "docs/index.html").read_text()
+        redirect = (ROOT / "docs/flash.html").read_text()
+        installer = (ROOT / "docs/installer.js").read_text()
+
+        self.assertIn("HTGDO-v2 HomeKit Installer", index)
+        self.assertIn("esp-web-tools@9.4.3", index)
+        self.assertIn("Security+ 2.0", index)
+        self.assertIn("Security+ 1.0", index)
+        self.assertIn("Dry Contact", index)
+        self.assertEqual(index.count("<esp-web-install-button"), 1)
+        self.assertIn('firmwareIdentity = "htgdo.homekit.v2.esp32"', installer)
+        self.assertIn('content="0; url=./"', redirect)
+        self.assertFalse((ROOT / "docs/manifest.json").exists())
+        self.assertNotIn("DISCO", index)
+        self.assertNotIn("ratCloud", index)
+
     def test_framework_patch_fails_closed(self):
         patch_script = (ROOT / "patch_files.py").read_text()
 

@@ -1,5 +1,11 @@
 > [!IMPORTANT]
-> This firmware is for the ESP32-based ratgdo32 and ratgdo32-disco series boards. It will not work with the ESP8266-based ratgdo v2.5xi boards. HomeKit support for for the original v2.5xi devices can be found [here](https://github.com/ratgdo/homekit-ratgdo)
+> Public HTGDO releases from this repository target the HTGDO-v2.x 30-pin ESP32 board. Do not flash them to ESP8266, ESP32-C6, ratgdo32-disco, or other boards.
+
+# HTGDO-v2 HomeKit firmware
+
+HTGDO ships one universal HomeKit binary for Security+ 2.0, Security+ 1.0, and Dry Contact configurations. Public versions use tags such as `htgdo-v2-homekit-1`; the stable device identity is `htgdo.homekit.v2.esp32`.
+
+Install from the [HTGDO-v2 HomeKit Web Installer](https://henrywang6.github.io/HTGDO-v2-HomeKit-firmware/). New releases are first published as prereleases for USB, Wi-Fi, HomeKit, and OTA validation, then promoted without rebuilding or replacing their assets.
 
 # What is HomeKit-RATGDO?
 
@@ -32,7 +38,7 @@ For full history please see [CHANGELOG.md](https://github.com/ratgdo/homekit-rat
 
 ## How do I install it?
 
-Connect your ratgdo to a computer with a USB cable and use the [online browser-based flash tool](https://ratgdo.github.io/homekit-ratgdo32/flash.html) to install the firmware.
+Connect your HTGDO-v2 to a computer with a USB cable and use the [HTGDO-v2 HomeKit Web Installer](https://henrywang6.github.io/HTGDO-v2-HomeKit-firmware/) to install the firmware.
 
 > [!NOTE]
 > The browser must be able to access a USB serial device. Some browsers block USB access. The Google Chrome browser is known to work and is recommended.
@@ -381,7 +387,7 @@ If the OTA firmware update fails the following message will be displayed and you
 [Espressif](https://www.espressif.com) publishes [esptool](https://docs.espressif.com/projects/esptool/en/latest/esp32/index.html), a command line utility built with python. Esptool requires that you connect a USB serial cable to the ratgdo device.
 
 > [!NOTE]
-> The ratgdo32 firmware comprises multiple files. It is strongly recommended to use the [online browser-based flash tool](https://ratgdo.github.io/homekit-ratgdo32/flash.html) described above rather than use this command directly
+> The HomeKit firmware includes a complete factory image. It is strongly recommended to use the [HTGDO-v2 HomeKit Web Installer](https://henrywang6.github.io/HTGDO-v2-HomeKit-firmware/) described above rather than use this command directly.
 
 ## Command Line Interface
 
@@ -549,7 +555,7 @@ Clicking on the system logs link will open a new browser tab with details of cur
 
 ### Serial port log
 
-If you are unable to connect to the ratgdo web page then it is possible to capture logs from the USB serial port.  If you installed homekit-ratgdo using the [online browser-based flash tool](https://ratgdo.github.io/homekit-ratgdo32/flash.html), you can use this same tool to display serial logs which you can then copy and use in a bug report.
+If you are unable to connect to the device web page, capture logs from the USB serial port. The [HTGDO-v2 HomeKit Web Installer](https://henrywang6.github.io/HTGDO-v2-HomeKit-firmware/) can display serial logs after connecting to the board.
 
 ### Serial port command line interface
 

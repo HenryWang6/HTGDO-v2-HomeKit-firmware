@@ -1,2 +1,76 @@
-<meta http-equiv="refresh" content="0; url=flash.html">
-You probably want <a href="flash.html">the flasher page</a>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>HTGDO-v2 HomeKit Installer</title>
+    <script type="module" src="https://unpkg.com/esp-web-tools@9.4.3/dist/web/install-button.js?module"></script>
+    <script src="installer.js"></script>
+    <style>
+      :root {
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #172033;
+        background: #f4f7fb;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      main {
+        width: min(100%, 560px);
+        box-sizing: border-box;
+        padding: 36px;
+        border: 1px solid #d9e1ee;
+        border-radius: 20px;
+        background: #fff;
+        box-shadow: 0 18px 50px rgb(43 61 89 / 12%);
+      }
+      h1 { margin: 0 0 12px; font-size: clamp(1.7rem, 6vw, 2.3rem); }
+      p { line-height: 1.6; }
+      .version { margin: 24px 0 16px; font-weight: 650; }
+      .support { color: #46536a; }
+      .migration { padding: 12px 14px; border-radius: 10px; background: #fff4e5; color: #6f4300; }
+      .status { min-height: 1.5em; color: #52617a; }
+      .status[data-state="error"] { color: #b42318; }
+      esp-web-install-button { display: block; margin-top: 14px; }
+      footer { margin-top: 28px; font-size: .9rem; color: #647089; }
+      @media (prefers-color-scheme: dark) {
+        :root { color: #eef3fb; background: #101521; }
+        main { background: #171e2d; border-color: #2c3850; box-shadow: none; }
+        .support, .status, footer { color: #b8c4d8; }
+        .migration { background: #3b2b13; color: #ffd694; }
+        .status[data-state="error"] { color: #ff9b8f; }
+      }
+      @media (max-width: 520px) {
+        body { padding: 14px; }
+        main { padding: 26px 20px; border-radius: 16px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>HTGDO-v2 HomeKit Installer</h1>
+      <p class="support">One universal firmware for Security+ 2.0, Security+ 1.0, and Dry Contact garage door openers.</p>
+      <p class="migration">Migrating from generic HomeKit-ratgdo32 firmware requires a new installation with <strong>Erase device</strong> selected.</p>
+      <p class="version">Version: <span id="firmware-version">Loading…</span></p>
+      <p id="installer-status" class="status" role="status">Loading release information…</p>
+      <esp-web-install-button id="install-button" hidden></esp-web-install-button>
+      <footer>Requires Chrome or Edge on a desktop computer with a USB connection to the HTGDO-v2 board.</footer>
+    </main>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        HTGDOInstaller.initialize({
+          fetchImpl: window.fetch.bind(window),
+          button: document.getElementById("install-button"),
+          statusElement: document.getElementById("installer-status"),
+          versionElement: document.getElementById("firmware-version"),
+        }).catch(() => {});
+      });
+    </script>
+  </body>
+</html>
