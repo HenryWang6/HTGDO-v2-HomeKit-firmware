@@ -38,6 +38,11 @@ SHA256SUMS
 
 `manifest.json` uses a single ESP32 factory image at offset `0`. `SHA256SUMS` covers every other release asset; the MD5 sidecar is additionally required by device OTA.
 
+The device web UI selects the exact OTA and MD5 asset names from the GitHub
+Release API, then downloads the byte-identical Pages copies. GitHub's
+release-asset redirects do not permit browser cross-origin reads; Pages supplies
+the required CORS header without adding a third-party proxy.
+
 ## Validate
 
 Before promotion, verify USB installation, Improv provisioning, Apple Home pairing, device metadata, and OTA from a development build. Compare every GitHub Release and Pages asset, including SHA-256 and OTA MD5 values.

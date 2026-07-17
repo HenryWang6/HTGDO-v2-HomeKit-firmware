@@ -95,10 +95,14 @@ class ProductContractTests(unittest.TestCase):
     def test_device_ota_uses_fork_release_assets_and_required_md5(self):
         web = (ROOT / "src/web.cpp").read_text()
         functions = (ROOT / "src/www/functions.js").read_text()
+        release_contract = (ROOT / "src/www/release-contract.js").read_text()
 
         self.assertIn('JSON_ADD_STR("gitUser", gitUser)', web)
-        self.assertIn("assets.ota.browser_download_url", functions)
-        self.assertIn("assets.md5.browser_download_url", functions)
+        self.assertIn("HTGDORelease.otaDownloadUrls", functions)
+        self.assertIn("downloadUrls.ota", functions)
+        self.assertIn("downloadUrls.md5", functions)
+        self.assertIn("browser_download_url", release_contract)
+        self.assertIn("github.io", release_contract)
         self.assertIn("Firmware MD5 checksum URL is missing", functions)
         self.assertNotIn("https://ratgdo.github.io/", functions)
         self.assertNotIn("serverStatus.firmwareVersion < latest.tag_name", functions)

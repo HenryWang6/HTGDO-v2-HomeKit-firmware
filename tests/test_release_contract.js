@@ -56,3 +56,15 @@ test("OTA selection requires exact bin and MD5 asset names", () => {
         null,
     );
 });
+
+test("browser OTA downloads use the CORS-enabled Pages copies", () => {
+    const taggedRelease = release("htgdo-v2-homekit-1");
+    assert.deepEqual(
+        contract.otaDownloadUrls(taggedRelease, "HenryWang6", "HTGDO-v2-HomeKit-firmware"),
+        {
+            ota: "https://HenryWang6.github.io/HTGDO-v2-HomeKit-firmware/htgdo-v2-homekit-1.ota.bin",
+            md5: "https://HenryWang6.github.io/HTGDO-v2-HomeKit-firmware/htgdo-v2-homekit-1.ota.md5",
+        },
+    );
+    assert.equal(contract.otaDownloadUrls(null, "HenryWang6", "repo"), null);
+});
