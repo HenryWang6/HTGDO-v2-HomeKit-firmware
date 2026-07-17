@@ -261,27 +261,15 @@ bool onCommandCallback(improv::ImprovCommand cmd)
     case improv::Command::GET_DEVICE_INFO:
     {
         ESP_LOGI(TAG, "Command GET_DEVICE_INFO");
-#ifdef ESP8266
         std::vector<std::string> infos = {
             // Firmware name
-            "HomeKit-ratgdo",
+            FIRMWARE_IDENTITY,
             // Firmware version
             AUTO_VERSION,
             // Hardware chip/variant
-            "ESP8266",
+            CHIP_FAMILY,
             // Device name
-            "Ratgdo"};
-#else
-        std::vector<std::string> infos = {
-            // Firmware name
-            "HomeKit-ratgdo32",
-            // Firmware version
-            AUTO_VERSION,
-            // Hardware chip/variant
-            "ESP32",
-            // Device name
-            "Ratgdo32"};
-#endif
+            MODEL_NAME};
         std::vector<uint8_t> data = improv::build_rpc_response(improv::GET_DEVICE_INFO, infos, false);
         send_response(data);
         break;

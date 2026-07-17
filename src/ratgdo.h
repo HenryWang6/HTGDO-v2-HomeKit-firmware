@@ -35,16 +35,43 @@
 #include "utilities.h"
 #include "../lib/ratgdo/log.h"
 
+#ifndef AUTO_VERSION
+#define AUTO_VERSION "dev"
+#endif
+#ifndef HAP_FIRMWARE_VERSION
+#define HAP_FIRMWARE_VERSION "0.0.0"
+#endif
+
+#ifdef HTGDO_V2
+#define DEVICE_NAME "htgdo-homekit"
+#define MANUF_NAME "HTGDO"
+#define MODEL_NAME "HTGDO-v2.2"
+#define HARDWARE_REVISION "2.2"
+#define FIRMWARE_FAMILY "htgdo.homekit"
+#define HARDWARE_TARGET "htgdo.v2.esp32"
+#define FIRMWARE_IDENTITY "htgdo.homekit.v2.esp32"
+#define CHIP_FAMILY "ESP32"
+#else
 #define DEVICE_NAME "homekit-ratgdo"
 #define MANUF_NAME "ratCloud llc"
-#define SERIAL_NUMBER "0P3ND00R"
 #ifdef ESP8266
 #define MODEL_NAME "ratgdo_v2.5"
+#define HARDWARE_REVISION "2.5"
+#define FIRMWARE_FAMILY "ratgdo.homekit"
+#define HARDWARE_TARGET "ratgdo.v2.esp8266"
+#define FIRMWARE_IDENTITY "HomeKit-ratgdo"
 #define CHIP_FAMILY "ESP8266"
 #else
 #define MODEL_NAME "ratgdo_32"
+#define HARDWARE_REVISION "1.0.0"
+#define FIRMWARE_FAMILY "ratgdo.homekit"
+#define HARDWARE_TARGET "ratgdo.esp32"
+#define FIRMWARE_IDENTITY "HomeKit-ratgdo32"
 #define CHIP_FAMILY "ESP32"
 #endif
+#endif
+
+#define SERIAL_NUMBER "0P3ND00R"
 
 #ifdef ESP8266
 #define UART_TX_PIN D1 // red control terminal / GarageDoorOpener (UART1 TX)
@@ -239,6 +266,6 @@ extern GarageDoor last_reported_garage_door;
 #ifdef ESP8266
 #define STATUS_JSON_BUFFER_SIZE (256 * 8)
 #else
-#define STATUS_JSON_BUFFER_SIZE (256 * 10)
+#define STATUS_JSON_BUFFER_SIZE (256 * 11)
 #endif
 extern char *status_json;

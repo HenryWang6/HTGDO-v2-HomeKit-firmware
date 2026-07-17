@@ -48,7 +48,10 @@ void serialCLI(char cmd)
             Serial.printf_P(PSTR("Current System time:   %s\n"), timeString());
             Serial.printf_P(PSTR("System boot time:      %s\n"), timeString(lastRebootAt));
         }
+        Serial.printf_P(PSTR("Firmware identity:     %s\n"), FIRMWARE_IDENTITY);
         Serial.printf_P(PSTR("Firmware version:      %s\n"), AUTO_VERSION);
+        Serial.printf_P(PSTR("Hardware target:       %s\n"), HARDWARE_TARGET);
+        Serial.printf_P(PSTR("Hardware revision:     %s\n"), HARDWARE_REVISION);
         Serial.printf_P(PSTR("Free heap:             %d\n"), free_heap);
         Serial.printf_P(PSTR("Minimum heap:          %d\n"), min_heap);
         Serial.printf_P(PSTR("Log level:             %d\n"), userConfig->getLogLevel());
