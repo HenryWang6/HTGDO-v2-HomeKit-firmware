@@ -163,6 +163,13 @@ class ProductContractTests(unittest.TestCase):
         self.assertNotIn("type_html", cache_condition)
         self.assertIn('char cacheHdr[24] = "no-cache, no-store"', web)
 
+    def test_esp32_web_ota_pauses_homespan_without_deleting_its_task(self):
+        web = (ROOT / "src/web.cpp").read_text()
+
+        self.assertIn("homeSpan.getMutex().lock()", web)
+        self.assertIn("homeSpanPollingPaused", web)
+        self.assertNotIn("vTaskDelete(homeSpan.getAutoPollTask())", web)
+
     def test_exact_release_version_fits_crash_diagnostics(self):
         log = (ROOT / "src/log.cpp").read_text()
 

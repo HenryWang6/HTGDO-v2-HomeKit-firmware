@@ -137,6 +137,12 @@ std::string _updaterError;
 bool _authenticatedUpdate;
 char firmwareMD5[36] = "";
 size_t firmwareSize = 0;
+#ifndef ESP8266
+// HomeSpan's poll task must be paused cooperatively during web OTA. Deleting
+// the task directly runs FreeRTOS TLS cleanup from another task and can panic
+// before the first firmware byte is written.
+static bool homeSpanPollingPaused = false;
+#endif
 
 // Common HTTP responses
 constexpr char response400missing[] = "400: Bad Request, missing argument\n";
@@ -1801,8 +1807,15 @@ void handle_firmware_upload()
             homekit_setup_done = false;
             arduino_homekit_close();
 #else
-            // Shutdown HomeSpan server
-            vTaskDelete(homeSpan.getAutoPollTask());
+            // Wait for the current HomeSpan poll iteration to finish, then
+            // prevent further polling until the device reboots. Keep the task
+            // alive so FreeRTOS does not run its TLS deletion callbacks here.
+            if (!homeSpanPollingPaused)
+            {
+                ESP_LOGI(TAG, "Pause HomeSpan polling");
+                homeSpan.getMutex().lock();
+                homeSpanPollingPaused = true;
+            }
 #endif
         }
 
