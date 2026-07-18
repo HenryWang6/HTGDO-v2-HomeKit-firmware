@@ -43,6 +43,50 @@ class ProductContractTests(unittest.TestCase):
         self.assertIn("Firmware identity:", serial_cli)
         self.assertIn("Hardware target:", serial_cli)
 
+    def test_htgdo_soft_ap_and_web_branding_are_user_visible(self):
+        soft_ap = (ROOT / "src/softAP.cpp").read_text()
+        index = (ROOT / "src/www/index.html").read_text()
+        logs = (ROOT / "src/www/logs.html").read_text()
+        functions = (ROOT / "src/www/functions.js").read_text()
+        manifest = (ROOT / "src/www/site.webmanifest").read_text()
+
+        self.assertIn('SOFT_AP_SSID = "HTGDO Setup"', soft_ap)
+        self.assertIn("WiFi.softAP(SOFT_AP_SSID)", soft_ap)
+        self.assertIn("HTGDO rebooting.", soft_ap)
+
+        for page in (index, logs):
+            self.assertIn('content="HTGDO HomeKit"', page)
+            self.assertIn("██  ██ ██████", page)
+            self.assertIn("for HomeKit", page)
+            self.assertIn("For HTGDO documentation and support", page)
+            self.assertIn("https://github.com/ratgdo/homekit-ratgdo32", page)
+            self.assertIn("homekit-ratgdo contributors", page)
+            self.assertIn("HTGDO adaptations copyright (c) 2026 HTGDO", page)
+            self.assertIn("GPL-3.0", page)
+
+        self.assertIn("<title>HTGDO HomeKit</title>", index)
+        self.assertIn("<title>HTGDO HomeKit Logs</title>", logs)
+        self.assertIn("Reboot HTGDO", index)
+        self.assertIn("HTGDO device status", logs)
+        self.assertIn('"name": "HTGDO HomeKit"', manifest)
+        self.assertIn('"short_name": "HTGDO"', manifest)
+        self.assertIn("HenryWang6/HTGDO-v2-HomeKit-firmware", logs)
+
+        self.assertIn("HTGDO Login Required", functions)
+        self.assertIn('WiFi Network: "HTGDO Setup"', functions)
+        self.assertIn("HTGDO device rebooting", functions)
+        self.assertIn(
+            'document.getElementById("docsLink").href = "https://github.com/" + gitUser + "/" + gitRepo',
+            functions,
+        )
+        self.assertIn(
+            'document.getElementById("contribLink").href = "https://github.com/" + gitUser + "/" + gitRepo + "/graphs/contributors"',
+            functions,
+        )
+        self.assertNotIn("RATGDO Login Required", functions)
+        self.assertNotIn("Reboot RATGDO", index)
+        self.assertNotIn("RATDGO", index + logs + manifest)
+
     def test_ci_runs_tests_and_only_builds_shipping_target(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
 

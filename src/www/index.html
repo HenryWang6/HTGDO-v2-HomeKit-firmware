@@ -5,11 +5,11 @@
   <!--  Copyright (c) 2023-25 David Kerr, https://github.com/dkerr64 -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=1">
-  <meta name="apple-mobile-web-app-title" content="RATDGO">
+  <meta name="apple-mobile-web-app-title" content="HTGDO HomeKit">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title>HomeKit Garage Door Opener</title>
+  <title>HTGDO HomeKit</title>
   <link rel="stylesheet" href="style.css?v=CRC-32">
   <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png?v=CRC-32" />
   <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64x64.png?v=CRC-32" />
@@ -32,10 +32,11 @@
       <div id="header" class="header">
         <div class="logo">
           <pre class="logo">
- _____ _____ _____ _____ ____  _____
-| __  |  _  |_   _|   __|    \|     |
-|    -|     | | | |  |  |  |  |  |  |
-|__|__|__|__| |_| |_____|____/|_____|
+
+██  ██ ██████ ▄████  ████▄  ▄████▄
+██████   ██  ██  ▄▄▄ ██  ██ ██  ██
+██  ██   ██   ▀███▀  ████▀  ▀████▀
+
           </pre>
           <p class="logo"> for HomeKit</p>
         </div>
@@ -127,7 +128,7 @@
         </div>
         <div class="fullwidth"
           style="padding-top: 0px; padding-bottom: 5px; padding-left: 0%; padding-right: 0%; display: flex; justify-content: space-between;">
-          <input type="button" value="Reboot RATGDO" style="width: 28%;" onclick="rebootRATGDO(true)">
+          <input type="button" value="Reboot HTGDO" style="width: 28%;" onclick="rebootRATGDO(true)">
           <input type="button" value="Firmware Update" style="width: 28%;" onclick="showUpdateDialog()">
           <input type="button" id="unpair" value="Reset HomeKit" style="width: 28%;" onclick="unpairRATGDO()">
         </div>
@@ -722,11 +723,13 @@
           <a style="color: red;" href="https://github.com/ratgdo/homekit-ratgdo32/blob/main/README.md#automatic-close"
             target="_blank">WARNING</a>&nbsp;Automatic&nbsp;door&nbsp;close&nbsp;<span id="autoCloseValue"></span>
         </p>
-        <p style="margin:0px; padding-bottom: 4px;">For documentation and support see the <a id="docsLink"
+        <p style="margin:0px; padding-bottom: 4px;">For HTGDO documentation and support see the <a id="docsLink"
             href="https://github.com/ratgdo/homekit-ratgdo">GitHub</a>
-          page.<br>Copyright (c) 2023-25 <a id="contribLink"
-            href="https://github.com/ratgdo/homekit-ratgdo/graphs/contributors">homekit-ratgdo
-            contributors.</a><br>Licensed under terms of the <a
+          page.<br>Firmware based on <a href="https://github.com/ratgdo/homekit-ratgdo32">homekit-ratgdo32</a>.
+          <br>Copyright (c) 2023-25 <a id="contribLink"
+            href="https://github.com/ratgdo/homekit-ratgdo/graphs/contributors">homekit-ratgdo contributors.</a>
+          <br>HTGDO adaptations copyright (c) 2026 HTGDO.
+          <br>Licensed under terms of the <a
             href="https://www.gnu.org/licenses/gpl-3.0.en.html">GPL-3.0
             License.</a>
         </p>

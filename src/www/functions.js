@@ -816,7 +816,7 @@ async function checkStatus() {
                 checkVersion(); // call this only after we have retrieved status from server
             })
             .catch((error) => {
-                console.warn(`Promise rejection error fetching status from RATGDO, try again in 5 seconds: ${error}`);
+                console.warn(`Promise rejection error fetching status from HTGDO, try again in 5 seconds: ${error}`);
                 delayStatusFn.push(setTimeout(checkStatus, 5000));
             }),
 
@@ -1116,7 +1116,7 @@ async function firmwareUpdate(github = true) {
         clearInterval(aniDots);
         if (showRebootMsg) {
             // Additional 10 seconds for ESP8266 new firmware copy on first boot.
-            countdown((isESP8266) ? rebootSeconds + 10 : rebootSeconds, rebootMsg + "<br>RATGDO device rebooting...&nbsp;");
+            countdown((isESP8266) ? rebootSeconds + 10 : rebootSeconds, rebootMsg + "<br>HTGDO device rebooting...&nbsp;");
         } else {
             document.getElementById("updateDotDot").style.display = "none";
             document.getElementById("updateDialog").style.display = "block";
@@ -1126,17 +1126,17 @@ async function firmwareUpdate(github = true) {
 
 async function rebootRATGDO(dialog = true) {
     if (dialog) {
-        let txt = "Reboot RATGDO, are you sure?";
+        let txt = "Reboot HTGDO, are you sure?";
         if (!confirm(txt)) return;
     }
     var response = await fetch("reboot", {
         method: "POST",
     });
     if (response.status !== 200) {
-        console.warn("Error attempting to reboot RATGDO");
+        console.warn("Error attempting to reboot HTGDO");
         return;
     }
-    if (dialog) countdown(rebootSeconds, "RATGDO device rebooting...&nbsp;");
+    if (dialog) countdown(rebootSeconds, "HTGDO device rebooting...&nbsp;");
 }
 
 async function unpairRATGDO() {
@@ -1150,10 +1150,10 @@ async function unpairRATGDO() {
     });
     loaderElem.style.visibility = "hidden";
     if (response.status !== 200) {
-        console.warn("Error attempting to unpair and reboot RATGDO");
+        console.warn("Error attempting to unpair and reboot HTGDO");
         return;
     }
-    countdown(rebootSeconds, "RATGO un-pairing and rebooting...&nbsp;");
+    countdown(rebootSeconds, "HTGDO un-pairing and rebooting...&nbsp;");
 }
 
 async function checkAuth(loader = true) {
@@ -1203,7 +1203,7 @@ async function setGDO(...args) {
                 signal: AbortSignal.timeout(2000),
             });
             if (response.status !== 200) {
-                console.warn("Error setting RATGDO state");
+                console.warn("Error setting HTGDO state");
                 return false;
             }
             else {
@@ -1250,7 +1250,7 @@ async function changePassword() {
     }
     let www_username = document.getElementById("newUserName").value.substring(0, 30);
     if (www_username.length == 0) www_username = serverStatus.userName ?? "admin";
-    const www_realm = "RATGDO Login Required";
+    const www_realm = "HTGDO Login Required";
     // MD5() function expects a Uint8Array typed ArrayBuffer...
     const passwordHash = MD5((new TextEncoder).encode(www_username + ":" + www_realm + ":" + newPW.value));
     console.log("Set new credentials to: " + passwordHash);
@@ -1494,7 +1494,7 @@ async function saveSettings() {
         ...(encoderReversed !== null ? ["encoderReversed", encoderReversed] : []),
     );
     if (reboot) {
-        countdown(rebootSeconds, "Settings saved, RATGDO device rebooting...&nbsp;");
+        countdown(rebootSeconds, "Settings saved, HTGDO device rebooting...&nbsp;");
     }
     else {
         // No need to reboot, but return to main page to reload status.
@@ -1506,7 +1506,7 @@ async function saveSettings() {
 async function resetDoor() {
     if (confirm('Reset door open/close history, rolling codes and presence of motion sensor. Settings will not change but device will reboot, are you sure?')) {
         await setGDO("resetDoor", true);
-        countdown(rebootSeconds, "Door reset, RATGDO device rebooting...&nbsp;");
+        countdown(rebootSeconds, "Door reset, HTGDO device rebooting...&nbsp;");
     }
     return;
 }
@@ -1528,12 +1528,12 @@ async function setSSID() {
 }
 
 async function bootSoftAP() {
-    if (confirm('This will reboot RATGDO device into Soft Access Point mode from where you can '
+    if (confirm('This will reboot HTGDO device into Soft Access Point mode from where you can '
         + 'select a WiFi network SSID.\n\nYou must connect your laptop or mobile device to '
-        + 'WiFi Network: "' + document.getElementById("deviceName").innerHTML.replace(/\s/g, '-') + '" and then connect your browser to IP address: '
+        + 'WiFi Network: "HTGDO Setup" and then connect your browser to IP address: '
         + '192.168.4.1\n\nAre you sure?')) {
         await setGDO("softAPmode", true);
-        countdown(rebootSeconds, "RATGDO device rebooting...&nbsp;");
+        countdown(rebootSeconds, "HTGDO device rebooting...&nbsp;");
     }
     return;
 }
@@ -1543,7 +1543,7 @@ async function factoryReset() {
         + 'You must delete the accessory from Apple Home and re-pair the device.\n\nYou will LOSE ALL AUTOMATIONS associated with this device\n\nAre you sure?')) {
         if (confirm('ARE YOU REALLY SURE?')) {
             await setGDO("factoryReset", true);
-            countdown(rebootSeconds, "RATGDO device rebooting...&nbsp;");
+            countdown(rebootSeconds, "HTGDO device rebooting...&nbsp;");
         }
     }
     return;
