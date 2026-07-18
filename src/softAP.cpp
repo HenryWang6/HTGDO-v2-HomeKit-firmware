@@ -38,6 +38,7 @@ static const char softAPtableLastRow[] PROGMEM = R"(
 <tr><td></td><td><input type='radio' id='net%d' name='net' value='%d'/>&nbsp;<label><input type='text' id='userSSID' name='userSSID' placeholder='SSID' value='%s'/></label></td></tr>)";
 static const char softAPsuccess[] PROGMEM = R"(<html><head><title>Success</title></head><body>Success</body><script type='text/javascript'>window.location.href = '/';</script></html>\n)";
 static const char softAPempty[] PROGMEM = R"(HTTP/1.1 204 No Content\nContent-Length: 0\n\n)";
+static constexpr const char *SOFT_AP_SSID = "HTGDO Setup";
 
 // forward declare functions
 void handle_softAPweb();
@@ -154,10 +155,10 @@ void wifi_scan()
 void start_soft_ap()
 {
     softAPmode = true;
-    ESP_LOGI(TAG, "Start AP mode for: %s", device_name_rfc952);
+    ESP_LOGI(TAG, "Start AP mode for: %s", SOFT_AP_SSID);
     WiFi.persistent(false);
     WiFi.setSleep(WIFI_PS_NONE); // Improves performance, at cost of power consumption
-    bool apStarted = WiFi.softAP(device_name_rfc952);
+    bool apStarted = WiFi.softAP(SOFT_AP_SSID);
     if (apStarted)
     {
         ESP_LOGI(TAG, "AP started with IP %s", WiFi.softAPIP().toString().c_str());
@@ -401,13 +402,13 @@ void handle_setssid()
     {
         ESP_LOGI(TAG, "Requested WiFi SSID: %s (%d) at AP: %02x:%02x:%02x:%02x:%02x:%02x",
                  ssid.c_str(), net, wifiNet.bssid[0], wifiNet.bssid[1], wifiNet.bssid[2], wifiNet.bssid[3], wifiNet.bssid[4], wifiNet.bssid[5]);
-        snprintf_P(txtBuffer, TXT_BUFFER_SIZE, PSTR("Setting SSID to: %s locked to Access Point: %02x:%02x:%02x:%02x:%02x:%02x\nRATGDO rebooting.\nPlease wait 30 seconds and connect to RATGDO on new network."),
+        snprintf_P(txtBuffer, TXT_BUFFER_SIZE, PSTR("Setting SSID to: %s locked to Access Point: %02x:%02x:%02x:%02x:%02x:%02x\nHTGDO rebooting.\nPlease wait 30 seconds and connect to HTGDO on new network."),
                    ssid.c_str(), wifiNet.bssid[0], wifiNet.bssid[1], wifiNet.bssid[2], wifiNet.bssid[3], wifiNet.bssid[4], wifiNet.bssid[5]);
     }
     else
     {
         ESP_LOGI(TAG, "Requested WiFi SSID: %s (%d)", ssid.c_str(), net);
-        snprintf_P(txtBuffer, TXT_BUFFER_SIZE, PSTR("Setting SSID to: %s\nRATGDO rebooting.\nPlease wait 30 seconds and connect to RATGDO on new network."), ssid.c_str());
+        snprintf_P(txtBuffer, TXT_BUFFER_SIZE, PSTR("Setting SSID to: %s\nHTGDO rebooting.\nPlease wait 30 seconds and connect to HTGDO on new network."), ssid.c_str());
     }
     server.client().setNoDelay(true);
     server.send_P(200, type_txt, txtBuffer);
