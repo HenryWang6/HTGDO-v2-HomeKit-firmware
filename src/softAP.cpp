@@ -392,7 +392,8 @@ void handle_wifinets()
     server.sendContent(softAPtableHead, strlen(softAPtableHead));
     int i = 0;
     char *txtBuffer = static_cast<char *>(malloc(TXT_BUFFER_SIZE));
-    char *escapedSSID = static_cast<char *>(malloc(192));
+#define ESCAPED_SSID_SIZE 192
+    char *escapedSSID = static_cast<char *>(malloc(ESCAPED_SSID_SIZE));
     for (wifiNet_t net : wifiNets)
     {
         bool hide = true;
@@ -408,7 +409,7 @@ void handle_wifinets()
         {
             matchSSID = false;
         }
-        htmlEscape(net.ssid.c_str(), escapedSSID, sizeof(escapedSSID));
+        htmlEscape(net.ssid.c_str(), escapedSSID, ESCAPED_SSID_SIZE);
         snprintf(txtBuffer, TXT_BUFFER_SIZE, softAPtableRow, (hide) ? "class='adv'" : "", i, i, (matchSSID) ? "checked='checked'" : "", i,
                  escapedSSID, net.rssi, net.channel,
                  net.bssid[0], net.bssid[1], net.bssid[2], net.bssid[3], net.bssid[4], net.bssid[5]);
@@ -416,7 +417,7 @@ void handle_wifinets()
         i++;
     }
     // user entered value
-    htmlEscape((!match) ? previousSSID.c_str() : "", escapedSSID, sizeof(escapedSSID));
+    htmlEscape((!match) ? previousSSID.c_str() : "", escapedSSID, ESCAPED_SSID_SIZE);
     snprintf(txtBuffer, TXT_BUFFER_SIZE, softAPtableLastRow, i, i, escapedSSID);
     server.sendContent(txtBuffer, strlen(txtBuffer));
     server.sendContent("\n", 1);
