@@ -19,6 +19,10 @@
 #include <tuple>
 #include <unordered_map>
 #include <time.h>
+#ifdef ESP32
+#include <shared_mutex>
+#include <mutex>
+#endif
 
 // ESP system includes
 #include <Ticker.h>
@@ -137,12 +141,30 @@ std::string _updaterError;
 bool _authenticatedUpdate;
 char firmwareMD5[36] = "";
 size_t firmwareSize = 0;
-#ifndef ESP8266
-// HomeSpan's poll task must be paused cooperatively during web OTA. Deleting
-// the task directly runs FreeRTOS TLS cleanup from another task and can panic
-// before the first firmware byte is written.
-static bool homeSpanPollingPaused = false;
-#endif
+
+// OTA tears down UART/GDO services. Recover by a clean restart rather than
+// rebuilding drivers/queues from an HTTP callback or remaining offline if the
+// uploader disappears before requesting its normal reboot.
+static bool otaServicesStopped = false;
+static bool otaUploadActive = false;
+static bool otaRecoveryPending = false;
+static _millis_t otaRecoveryStart = 0;
+static uint32_t otaRecoveryDelay = 0;
+static constexpr uint32_t OTA_FAILURE_RESTART_MS = 1000;
+static constexpr uint32_t OTA_STAGED_RESTART_MS = 30000;
+
+static bool recoverStoppedOTAServices()
+{
+    if (!otaRecoveryPending || otaUploadActive)
+        return false;
+    if (_millis() - otaRecoveryStart < otaRecoveryDelay)
+        return false;
+    otaRecoveryPending = false;
+    ESP_LOGW(TAG, "Restarting to restore services stopped for firmware upload");
+    server.stop();
+    sync_and_restart();
+    return true;
+}
 
 // Common HTTP responses
 constexpr char response400missing[] = "400: Bad Request, missing argument\n";
@@ -339,6 +361,8 @@ void notify_new_ipv6_address()
 void web_loop()
 {
     if (!web_setup_done)
+        return;
+    if (recoverStoppedOTAServices())
         return;
 
     static char *json = status_json;
@@ -1738,7 +1762,8 @@ void handle_update()
     if (server.args() > 0)
     {
         firmwareUpdateSub = NULL;
-        // Don't reboot, user/client must explicitly request reboot.
+        // The client normally requests reboot after this response. A bounded
+        // fallback also restores services if that client disappears.
         server.send_P(200, type_txt, PSTR("Upload Success.\n"));
     }
     else
@@ -1761,6 +1786,10 @@ void handle_firmware_upload()
     HTTPUpload &upload = server.upload();
     static bool verify = false;
     static size_t size = 0;
+#ifdef ESP32
+    // Use the same mutex as homeSpanPAUSE, retaining it across upload callbacks.
+    static std::shared_lock<std::shared_mutex> homekitUpdateLock(homeSpan.getMutex(), std::defer_lock);
+#endif
 
     if (upload.status == UPLOAD_FILE_START)
     {
@@ -1776,6 +1805,9 @@ void handle_firmware_upload()
             ESP_LOGE(TAG, "Unauthenticated Update");
             return;
         }
+        // Never reboot in the middle of a transfer/verification. Keep an
+        // existing recovery deadline armed until a terminal callback, so a
+        // rejected retry cannot permanently cancel recovery.
         ESP_LOGI(TAG, "Update: %s", upload.filename.c_str());
         verify = !strcmp(server.arg("action").c_str(), "verify");
         size = atoi(server.arg("size").c_str());
@@ -1787,6 +1819,7 @@ void handle_firmware_upload()
             strlcpy(firmwareMD5, server.arg("md5").c_str(), sizeof(firmwareMD5));
 
         uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+        otaUploadActive = true;
         ESP_LOGI(TAG, "Available space for upload: %lu", maxSketchSpace);
         ESP_LOGI(TAG, "Firmware size: %s", (firmwareSize > 0) ? std::to_string(firmwareSize).c_str() : "Unknown");
         ESP_LOGI(TAG, "Flash chip speed %d MHz", ESP.getFlashChipSpeed() / 1000000);
@@ -1802,10 +1835,17 @@ void handle_firmware_upload()
         }
         else if (!verify)
         {
+#ifdef ESP32
+            // Pause at HomeSpan's own polling boundary; retain the task and its locks.
+            if (!homekitUpdateLock.owns_lock())
+                homekitUpdateLock.lock();
+#endif
             // Close services so we don't have to handle network traffic during update
             // Only if not verifying as either will have been shutdown on immediately prior upload, or we
             // just want to verify without disrupting operation of the HomeKit service.
             ESP_LOGI(TAG, "Shutdown HomeKit and GDO communications");
+
+            otaServicesStopped = true;
 
             // Service loop has things like reboot after X days, homekit notifications, etc. that we don't want during OTA
             suspend_service_loop = true;
@@ -1818,16 +1858,6 @@ void handle_firmware_upload()
             // Shutdown HomeKit
             homekit_setup_done = false;
             arduino_homekit_close();
-#else
-            // Wait for the current HomeSpan poll iteration to finish, then
-            // prevent further polling until the device reboots. Keep the task
-            // alive so FreeRTOS does not run its TLS deletion callbacks here.
-            if (!homeSpanPollingPaused)
-            {
-                ESP_LOGI(TAG, "Pause HomeSpan polling");
-                homeSpan.getMutex().lock();
-                homeSpanPollingPaused = true;
-            }
 #endif
         }
 
@@ -1906,5 +1936,22 @@ void handle_firmware_upload()
             Update.end();
         ESP_LOGI(TAG, "%s was aborted", verify ? "Verify" : "Update");
         firmwareUpdateSub = NULL;
+    }
+#ifdef ESP32
+    // Release polling after success, write/authentication errors, or disconnect.
+    if ((upload.status == UPLOAD_FILE_END || upload.status == UPLOAD_FILE_ABORTED) &&
+        homekitUpdateLock.owns_lock())
+        homekitUpdateLock.unlock();
+#endif
+    if (upload.status == UPLOAD_FILE_END || upload.status == UPLOAD_FILE_ABORTED)
+    {
+        otaUploadActive = false;
+        if (_authenticatedUpdate && otaServicesStopped)
+        {
+            const bool failed = upload.status == UPLOAD_FILE_ABORTED || _updaterError.length();
+            otaRecoveryStart = _millis();
+            otaRecoveryDelay = failed ? OTA_FAILURE_RESTART_MS : OTA_STAGED_RESTART_MS;
+            otaRecoveryPending = true;
+        }
     }
 }

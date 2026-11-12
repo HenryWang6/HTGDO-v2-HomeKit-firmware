@@ -166,8 +166,9 @@ class ProductContractTests(unittest.TestCase):
     def test_esp32_web_ota_pauses_homespan_without_deleting_its_task(self):
         web = (ROOT / "src/web.cpp").read_text()
 
-        self.assertIn("homeSpan.getMutex().lock()", web)
-        self.assertIn("homeSpanPollingPaused", web)
+        self.assertIn("homekitUpdateLock(homeSpan.getMutex(), std::defer_lock)", web)
+        self.assertIn("homekitUpdateLock.lock()", web)
+        self.assertIn("homekitUpdateLock.unlock()", web)
         self.assertNotIn("vTaskDelete(homeSpan.getAutoPollTask())", web)
 
     def test_exact_release_version_fits_crash_diagnostics(self):
