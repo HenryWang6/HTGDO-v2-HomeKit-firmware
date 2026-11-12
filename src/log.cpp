@@ -3,7 +3,7 @@
  * https://ratcloud.llc
  * https://github.com/PaulWieland/ratgdo
  *
- * Copyright (c) 2023-25 David A Kerr... https://github.com/dkerr64/
+ * Copyright (c) 2023-26 David A Kerr... https://github.com/dkerr64/
  * All Rights Reserved.
  * Licensed under terms of the GPL-3.0 License.
  *
@@ -14,16 +14,18 @@
  */
 
 // C/C++ language includes
-#include <stdint.h>
+#include <cstring>
 
 // Arduino includes
 #include <WiFiUdp.h>
 #ifndef ESP8266
 #include <esp32-hal.h>
 #include <esp_core_dump.h>
-#include <lwip/opt.h>
-#include <arch/sys_arch.h>
 #include <esp_rom_sys.h>
+#include <esp_rom_uart.h>
+#include <arch/sys_arch.h>
+#else
+#include <ets_sys.h>
 #endif
 
 // RATGDO project includes
@@ -31,7 +33,6 @@
 #include "config.h"
 #include "utilities.h"
 #include "web.h"
-#include <cstring>
 
 #ifndef ESP8266
 // Protected by logMutex. Absolute byte positions let a reader detect when
@@ -55,37 +56,39 @@ WiFiUDP syslog;
 bool suppressSerialLog = false;
 esp_log_level_t logLevel = ESP_LOG_VERBOSE;
 
-#define SERIAL_PRINT(x)         \
-    do                          \
-    {                           \
-        if (!suppressSerialLog) \
-            Serial.print(x);    \
-    } while (0)
+// Serial print helper for both ESP32 and ESP8266 to allow direct
+// output to the UART without relying on the Arduino Serial object.
+#ifndef ESP8266
+#define rom_putc(c) esp_rom_output_tx_one_char(c)
+#else
+#define esp_rom_vprintf(fmt, args) ets_vprintf(ets_putc, fmt, args)
+#define sys_thread_tcpip(x) (false)
+#define rom_putc(c) ets_putc(c)
+#endif
+
+void SERIAL_PRINT(const char *str)
+{
+    if (!suppressSerialLog)
+    {
+        while (*str)
+            rom_putc(*str++);
+    }
+}
 
 // Allows us to intercept all ESP_LOGx() even outside our code.
 void esp_log_hook(const char *fmt, va_list args)
 {
-#ifndef ESP8266
-    // Serial.begin() and Serial.print() can block on UART driver locks while
-    // lwIP holds its core lock. ROM printf writes the UART directly, so core-held
-    // logs still reach the serial port even before ratgdoLogger exists.
-    if (sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER))
-    {
-        if (ratgdoLogger)
-            ratgdoLogger->logToBuffer(fmt, args);
-        else if (!suppressSerialLog)
-            esp_rom_vprintf(fmt, args);
-        return;
-    }
-#endif
-    if (!Serial)
+    if (!Serial && !sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER))
     {
         // Before we can log anything, we need to initialize the serial port.
+        // On ESP32, Serial.begin() and Serial.print() can block on UART driver locks while
+        // lwIP holds its core lock. ROM printf writes the UART directly
         Serial.begin(115200);
         while (!Serial)
             ; // Wait for serial port to open
         Serial.print("\n\n\n");
     }
+
     if (ratgdoLogger)
     {
         ratgdoLogger->logToBuffer(fmt, args);
@@ -94,9 +97,7 @@ void esp_log_hook(const char *fmt, va_list args)
     {
         // We should only ever come here if ratgdoLogger has not been constructed
         // which would only be in very early part of booting the system
-        char buf[64];
-        vsnprintf(buf, 64, fmt, args);
-        Serial.print(buf);
+        esp_rom_vprintf(fmt, args);
     }
 }
 
@@ -109,7 +110,8 @@ void crashCallback();
 int32_t crashCount = 0;
 EspSaveCrash saveCrash(1408, 1024, true, &crashCallback);
 // ESP8266 is single core / single threaded, no mutex's.
-#define TAKE_MUTEX()
+#define pdTRUE 1
+#define TAKE_MUTEX(delay) 1 // Always return pdTRUE
 #define GIVE_MUTEX()
 
 void crashCallback()
@@ -158,7 +160,7 @@ RTC_NOINIT_ATTR volatile uint32_t resetMagic;
 const int rtcSize = sizeof(rtcRebootLog) + sizeof(rtcCrashLog) + sizeof(rebootTime) + sizeof(rebootUpTime) + sizeof(crashTime) + sizeof(crashUpTime) +
                     sizeof(crashCount) + sizeof(reasonString) + sizeof(crashVersion) + sizeof(resetMagic);
 
-#define TAKE_MUTEX() xSemaphoreTakeRecursive(logMutex, portMAX_DELAY)
+#define TAKE_MUTEX(delay) xSemaphoreTakeRecursive(logMutex, delay)
 #define GIVE_MUTEX() xSemaphoreGiveRecursive(logMutex)
 
 void panic_handler(arduino_panic_info_t *info, void *arg)
@@ -233,14 +235,13 @@ LOG::LOG()
 
 void LOG::logToBuffer(const char *fmt, va_list args)
 {
-#ifndef ESP8266
-    // lwIP logs while holding its non-recursive TCPIP core lock. Socket
-    // delivery would take that lock again; waiting for another logger can
-    // also deadlock if that logger is waiting for the core, so only try.
-    const bool coreLocked = sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER);
-    if (xSemaphoreTakeRecursive(logMutex, coreLocked ? 0 : portMAX_DELAY) != pdTRUE)
+    const bool coreLocked = sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER); // Always false on ESP8266
+    if (TAKE_MUTEX((coreLocked ? 0 : portMAX_DELAY)) != pdTRUE)            // Always pdTRUE on ESP8266
+    {
+        // If we failed to take the mutex, we still want to print the line to the serial port then abort
+        esp_rom_vprintf(fmt, args);
         return;
-#endif
+    }
     // parse the format string into lineBuffer
     vsnprintf(lineBuffer, LINE_BUFFER_SIZE, fmt, args);
     // If timestamp is wrapped in () and not [] then message is from one of the ESP_LOGx() functions.
@@ -262,16 +263,7 @@ void LOG::logToBuffer(const char *fmt, va_list args)
     }
 
     //  print line to the serial port
-#ifndef ESP8266
-    if (coreLocked)
-    {
-        // Serial.print() can wait for a driver mutex or TX space; ROM printf cannot.
-        if (!suppressSerialLog)
-            esp_rom_printf("%s", lineBuffer);
-    }
-    else
-#endif
-        SERIAL_PRINT(lineBuffer);
+    SERIAL_PRINT(lineBuffer);
 
     // copy the line into the message save buffer
     size_t len = strlen(lineBuffer);
@@ -295,11 +287,7 @@ void LOG::logToBuffer(const char *fmt, va_list args)
 #endif
 
     static bool inFn = false;
-    if (!inFn
-#ifndef ESP8266
-        && !coreLocked
-#endif
-    )
+    if (!inFn && !coreLocked)
     {
         // Control recursion... make sure we don't get into a loop if any
         // of the functions we use here log a message.  This is known to happen
@@ -322,7 +310,7 @@ void LOG::clearCrashLog()
     crashCount = 0;
 #else
     esp_core_dump_image_erase();
-    TAKE_MUTEX();
+    TAKE_MUTEX(portMAX_DELAY);
     crashCount = 0;
     GIVE_MUTEX();
 #endif
@@ -360,7 +348,7 @@ void LOG::printCrashLog(Print &outputDev)
     // The RTC crash log is written only by the panic handler, which resets the
     // device. Snapshot ordinary mutable metadata without holding the logger
     // lock across flash access or potentially blocking output.
-    TAKE_MUTEX();
+    TAKE_MUTEX(portMAX_DELAY);
     const int32_t savedCrashCount = crashCount;
     const time_t savedCrashTime = crashTime;
     const _millis_t savedCrashUpTime = crashUpTime;
@@ -424,7 +412,7 @@ void LOG::printCrashLog(Print &outputDev)
 void LOG::saveMessageLog()
 {
     ESP_LOGI(TAG, "Save message log buffer");
-    TAKE_MUTEX();
+    TAKE_MUTEX(portMAX_DELAY);
     size_t len = sizeof(rtcRebootLog.buffer);
     uint32_t end = (msgBuffer->head + 1) % sizeof(msgBuffer->buffer); // include the null terminator
     uint32_t start = (sizeof(msgBuffer->buffer) + end - len) % sizeof(msgBuffer->buffer);
@@ -521,7 +509,7 @@ void LOG::printMessageLog(Print &outputDev, bool slow)
         index = (index + length) % capacity;
         next += length;
     };
-    TAKE_MUTEX();
+    TAKE_MUTEX(portMAX_DELAY);
     if (msgBuffer)
     {
         end = logAppendBytes;
@@ -594,7 +582,7 @@ void LOG::printMessageLog(Print &outputDev, bool slow)
             outputDev.flush();
 
         bool overwritten = false;
-        TAKE_MUTEX();
+        TAKE_MUTEX(portMAX_DELAY);
         length = 0;
         if (next < end)
         {
