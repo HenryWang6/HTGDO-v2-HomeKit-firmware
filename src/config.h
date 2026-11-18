@@ -209,7 +209,15 @@ public:
     bool getDCBypassTTC() { return std::get<bool>(get(cfg_dcBypassTTC)); };
     bool getUseToggle() { return std::get<bool>(get(cfg_useToggle)); };
     uint32_t getDCDebounceDuration() { return std::get<int>(get(cfg_dcDebounceDuration)); };
-    bool getObstFromStatus() { return std::get<bool>(get(cfg_obstFromStatus)); };
+    bool getObstFromStatus() {
+#ifdef HTGDO_V2
+        // Keep the saved setting for OTA compatibility, but use automatic
+        // obstruction source selection for HTGDO Security+ openers.
+        if (getGDOSecurityType() == 1 || getGDOSecurityType() == 2)
+            return false;
+#endif
+        return std::get<bool>(get(cfg_obstFromStatus));
+    };
     uint32_t getBuiltInTTC() { return std::get<int>(get(cfg_builtInTTC)); };
     bool getReverseOnStop() { return std::get<bool>(get(cfg_reverseOnStop)); };
 #ifdef RATGDO32_DISCO

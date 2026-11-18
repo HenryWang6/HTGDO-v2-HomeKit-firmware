@@ -275,6 +275,10 @@ void IRAM_ATTR isr_obstruction()
 
 static void update_obstruction_from_message(bool obstructed, const char *source)
 {
+#ifdef HTGDO_V2
+    if (doorControlType != 3 && garage_door.pinModeObstructionSensor)
+        return;
+#endif
     if (garage_door.obstructed == obstructed)
     {
         return;
@@ -758,8 +762,13 @@ void setup_comms()
 #ifndef USE_GDOLIB
     if (!(get_obstruction_from_status = userConfig->getObstFromStatus()))
     {
-        // pin-based obstruction detection attempted only if user not requested to get from status
-        ESP_LOGI(TAG, "Initialize for pin-based obstruction detection");
+        // Until valid GPIO4 pulses arrive, opener messages provide obstruction status.
+#ifdef HTGDO_V2
+        if (doorControlType != 3)
+            ESP_LOGI(TAG, "Automatic obstruction detection: messages until GPIO4 pulses, then pin-based");
+        else
+#endif
+            ESP_LOGI(TAG, "Initialize for pin-based obstruction detection");
 #if defined(ESP8266) || defined(OBST_PIN_NORMAL)
         pinMode(INPUT_OBST_PIN, INPUT);
 #else
@@ -3339,11 +3348,19 @@ void obstruction_timer()
                 digitalWrite(STATUS_OBST_PIN, HIGH);
             }
         }
-        else if (pulse_count == 0)
+        else if (pulse_count == 0
+#ifdef HTGDO_V2
+                 && (doorControlType == 3 || garage_door.pinModeObstructionSensor)
+#endif
+        )
         {
 #if defined(ESP8266) || defined(GRGDO1_V2)
             // LOW?
             if (!digitalRead(INPUT_OBST_PIN))
+#elif defined(HTGDO_V2)
+            // The optional HTGDO GPIO4 circuit has LOW asleep / HIGH obstructed.
+            // Keep the original ESP32 polarity for dry-contact mode.
+            if (doorControlType == 3 ? digitalRead(INPUT_OBST_PIN) : !digitalRead(INPUT_OBST_PIN))
 #else
             // HIGH? (pin inversion on RATDGO32/RATDGO32 DISCO (ESP32))
             if (digitalRead(INPUT_OBST_PIN))
