@@ -104,7 +104,7 @@ Status of the garage door along with action buttons are shown in this section. T
 
 If you have a Security+ 1.0 door then you may see the word _(emulation)_ next to the door protocol. This indicates that you do not have a digital wall panel and the ratgdo is emulating this.
 
-Next to the obstruction status you will see the word _(Pin-based)_ or _(Message)_ that indicates how ratgdo is detecting whether there is an obstruction that may prevent the door from closing. By default, new or erased configurations use garage door status messages. You can disable this setting to attempt pin-based detection instead.
+Next to the obstruction status you will see _(Pin-based)_ or _(Message)_, indicating the active source. On HTGDO Security+ devices, an optional GPIO4 sensor connection is detected automatically. Until valid sensor pulses are seen after startup, the firmware uses opener messages. Once pulses are detected, the original pin-based sensing path takes priority until restart. The firmware is intended to support a disconnected GPIO4 line; that case still requires hardware validation.
 
 For Security+ 2.0 doors, the number of times the door has been opened and closed is shown as _Cycle Count_ and, if equipped, the status of the emergency backup battery.
 
@@ -270,7 +270,7 @@ For Security+ 1.0 and Security+ 2.0, communications with the garage door uses a 
 
 ### Get obstruction from GDO status messages
 
-By default, new or erased configurations obtain obstruction state from messages sent by the GDO. Clearing this option attempts pin-based detection from the obstruction sensor wire instead. Status-message reporting can be slower for normal status packets, but Security+ 2.0 obstruction changes are also updated from pair-response messages when available.
+On HTGDO Security+ devices, the firmware automatically uses GDO messages until it detects valid pulses on the optional GPIO4 sensor line, then gives the pin priority until restart. This setting is hidden on HTGDO; saved values from older firmware are ignored. On other targets, the setting retains its previous behavior. Message reporting can be slower for normal status packets, but Security+ 2.0 changes are also updated from pair-response messages when available.
 
 ### WiFi Version _(not supported on ratgdo32 boards)_
 

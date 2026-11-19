@@ -239,7 +239,12 @@ void load_all_config_settings()
     ESP_LOGI(TAG, "   rebootSeconds:       %d", userConfig->getRebootSeconds());
     ESP_LOGI(TAG, "   LEDidle:             %d", userConfig->getLEDidle());
     ESP_LOGI(TAG, "   motionTriggers:      %d", userConfig->getMotionTriggers());
-    ESP_LOGI(TAG, "   obstFromStatus:      %s", userConfig->getObstFromStatus() ? "true" : "false");
+#ifdef HTGDO_V2
+    if (userConfig->getGDOSecurityType() == 1 || userConfig->getGDOSecurityType() == 2)
+        ESP_LOGI(TAG, "   obstruction source: automatic (messages until GPIO4 pulses)");
+    else
+#endif
+        ESP_LOGI(TAG, "   obstFromStatus:      %s", userConfig->getObstFromStatus() ? "true" : "false");
     ESP_LOGI(TAG, "   enableNTP:           %s", userConfig->getEnableNTP() ? "true" : "false");
     ESP_LOGI(TAG, "   doorUpdateAt:        %d (%s)", userConfig->getDoorUpdateAt(), timeString(userConfig->getDoorUpdateAt()));
     ESP_LOGI(TAG, "   doorOpenAt:          %d (%s)", userConfig->getDoorOpenAt(), timeString(userConfig->getDoorOpenAt()));

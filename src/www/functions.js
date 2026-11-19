@@ -146,7 +146,7 @@ function toggleDCOpenClose(radio) {
         document.getElementById("useSWserial").disabled = (value == 3);
     }
     document.getElementById("dcOpenClose").disabled = (value == 3);
-    document.getElementById("obstFromStatus").disabled = (value == 3);
+    updateObstructionSettingVisibility(value);
     document.getElementById("useToggle").disabled = (value != 2);
     document.getElementById("lightHomeKit").disabled = (value == 3);
     document.getElementById("dcDebounceDurationRow").style.opacity = (value == 3) ? 1 : 0.5;
@@ -157,6 +157,12 @@ function toggleDCOpenClose(radio) {
         document.getElementById("encoderRow").style.display = (value == 3) ? "table-row" : "none";
     }
     toggleHardwiredBypassRow();
+}
+
+function updateObstructionSettingVisibility(protocol) {
+    const automatic = serverStatus.hardwareTarget === "htgdo.v2.esp32" && protocol != 3;
+    document.getElementById("obstFromStatusRow").style.display = automatic ? "none" : "table-row";
+    document.getElementById("obstFromStatus").disabled = automatic || protocol == 3;
 }
 
 function toggleHardwiredBypassRow() {
@@ -411,7 +417,7 @@ function setElementsFromStatus(status) {
                     document.getElementById("useSWserial").disabled = (value == 3);
                 }
                 document.getElementById("dcOpenClose").disabled = (value == 3);
-                document.getElementById("obstFromStatus").disabled = (value == 3);
+                updateObstructionSettingVisibility(value);
                 document.getElementById("useToggle").disabled = (value != 2);
                 document.getElementById("lightHomeKit").disabled = (value == 3);
                 document.getElementById("dcDebounceDurationRow").style.opacity = (value == 3) ? 1 : 0.5;
@@ -429,11 +435,11 @@ function setElementsFromStatus(status) {
                 document.getElementById("sec1emulation").style.display = (value == true) ? "" : "none";
                 break;
             case "deviceName":
-                document.getElementById(key).innerHTML = value;
+                document.getElementById(key).textContent = value;
                 document.title = value;
                 document.getElementById("newDeviceName").placeholder = value;
                 let mdnsName = makeRfc952(value) + ".local";
-                document.getElementById("mdnsName").innerHTML = mdnsName;
+                document.getElementById("mdnsName").textContent = mdnsName;
                 break;
             case "userName":
                 document.getElementById("newUserName").placeholder = value;
@@ -1358,6 +1364,7 @@ async function saveSettings() {
     }
     const gdoSec = (document.getElementById("gdosec1").checked) ? '1'
         : (document.getElementById("gdosec2").checked) ? '2' : '3';
+    const automaticObstruction = serverStatus.hardwareTarget === "htgdo.v2.esp32" && gdoSec !== '3';
     const pwReq = (document.getElementById("pwreq").checked) ? '1' : '0';
 
     const motionTriggers = getMotionTriggers();
@@ -1483,7 +1490,7 @@ async function saveSettings() {
         "syslogFacility", syslogFacility,
         "logLevel", logLevel,
         "useSWserial", useSWserial,
-        "obstFromStatus", obstFromStatus,
+        ...(automaticObstruction ? [] : ["obstFromStatus", obstFromStatus]),
         "reverseOnStop", reverseOnStop,
         "dcDebounceDuration", dcDebounceDuration,
         "homespanCLI", homespanCLI,

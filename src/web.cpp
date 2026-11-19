@@ -19,6 +19,11 @@
 #include <tuple>
 #include <unordered_map>
 #include <time.h>
+#ifndef ESP8266
+#include <atomic>
+#include <mutex>
+#include <shared_mutex>
+#endif
 
 // ESP system includes
 #include <Ticker.h>
@@ -31,6 +36,9 @@
 #else
 #include "esp_core_dump.h"
 #include <ESPmDNS.h>
+#include <lwip/sockets.h>
+// Preserve Arduino's IPAddress constant rather than lwIP's integer macro.
+#undef INADDR_NONE
 #endif
 
 // RATGDO project includes
@@ -85,6 +93,7 @@ char *test_str = NULL;
 void handle_update();
 void handle_firmware_upload();
 void SSEHandler(uint32_t channel);
+static void sendSSEHeartbeats();
 void add_static_mdns();
 void add_dynamic_mdns();
 
@@ -137,12 +146,30 @@ std::string _updaterError;
 bool _authenticatedUpdate;
 char firmwareMD5[36] = "";
 size_t firmwareSize = 0;
-#ifndef ESP8266
-// HomeSpan's poll task must be paused cooperatively during web OTA. Deleting
-// the task directly runs FreeRTOS TLS cleanup from another task and can panic
-// before the first firmware byte is written.
-static bool homeSpanPollingPaused = false;
-#endif
+
+// OTA tears down UART/GDO services. Recover by a clean restart rather than
+// rebuilding drivers/queues from an HTTP callback or remaining offline if the
+// uploader disappears before requesting its normal reboot.
+static bool otaServicesStopped = false;
+static bool otaUploadActive = false;
+static bool otaRecoveryPending = false;
+static _millis_t otaRecoveryStart = 0;
+static uint32_t otaRecoveryDelay = 0;
+static constexpr uint32_t OTA_FAILURE_RESTART_MS = 1000;
+static constexpr uint32_t OTA_STAGED_RESTART_MS = 30000;
+
+static bool recoverStoppedOTAServices()
+{
+    if (!otaRecoveryPending || otaUploadActive)
+        return false;
+    if (_millis() - otaRecoveryStart < otaRecoveryDelay)
+        return false;
+    otaRecoveryPending = false;
+    ESP_LOGW(TAG, "Restarting to restore services stopped for firmware upload");
+    server.stop();
+    sync_and_restart();
+    return true;
+}
 
 // Common HTTP responses
 constexpr char response400missing[] = "400: Bad Request, missing argument\n";
@@ -197,6 +224,12 @@ struct SSESubscription
     int SSEfailCount;
     String clientUUID;
     bool logViewer;
+    // Set by heartbeatTimer, sent from the main loop by sendSSEHeartbeats().
+#ifdef ESP8266
+    volatile bool heartbeatDue;
+#else
+    std::atomic<bool> heartbeatDue;
+#endif
 };
 SSESubscription subscription[SSE_MAX_CHANNELS];
 // During firmware update note which subscribed client is updating
@@ -225,6 +258,36 @@ static SemaphoreHandle_t jsonMutex = NULL;
     xSemaphoreGive(jsonMutex)
 #endif
 
+// Serializes the SSE subscriptions between the main loop and tasks that log.
+// Take it after the JSON mutex. It is recursive, so SSE code can log and that
+// line still reaches the log viewer.
+#ifdef ESP8266
+struct SSELock
+{
+    explicit SSELock(bool = true) {}
+    explicit operator bool() const { return true; }
+};
+#else
+static SemaphoreHandle_t sseMutex = NULL;
+struct SSELock
+{
+    const bool held;
+    explicit SSELock(bool wait = true) : held(xSemaphoreTakeRecursive(sseMutex, wait ? portMAX_DELAY : 0) == pdTRUE) {}
+    ~SSELock()
+    {
+        if (held)
+            xSemaphoreGiveRecursive(sseMutex);
+    }
+    explicit operator bool() const { return held; }
+};
+#endif
+
+static void clearFirmwareUpdateSubscription()
+{
+    SSELock lock;
+    firmwareUpdateSub = nullptr;
+}
+
 // mDNS update management... re-announcing every 2 minutes.
 #define MDNS_ANNOUNCE_TIMEOUT (2 * 60 * 1000)
 // But not more often than every 10 seconds if pending updates.
@@ -246,22 +309,40 @@ int activeRequestCount = 0;
 
 #define CLIENT_WRITE_TIMEOUT 500
 static char writeBuffer[512];
-bool clientWrite(WiFiClient client, const char *data)
+// Send one SSE event. On failure the client is stopped, and the next
+// heartbeat or broadcast removes the subscription. With dropIfFull, a full
+// send buffer only loses this event (for the log viewer, which can afford it).
+static bool sendSSEEvent(WiFiClient &client, const char *event, const char *data, bool dropIfFull = false)
 {
-    size_t len = strlen(data);
-    size_t written = 0;
-#ifdef ESP8266
+#ifdef ESP32
+    // NetworkClient::write() can retry select() for 10 seconds on a stalled
+    // browser. Send the whole event in one nonblocking call instead, straight
+    // from the caller's strings (lwIP copies them before returning).
+    struct iovec parts[] = {
+        {(char *)"event: ", 7},
+        {(char *)event, strlen(event)},
+        {(char *)"\ndata: ", 7},
+        {(char *)data, strlen(data)},
+        {(char *)"\n\n", 2}};
+    struct msghdr message = {};
+    message.msg_iov = parts;
+    message.msg_iovlen = 5;
+    const ssize_t sent = sendmsg(client.fd(), &message, MSG_DONTWAIT);
+    if (sent == (ssize_t)(16 + parts[1].iov_len + parts[3].iov_len))
+        return true;
+    if (dropIfFull && sent < 0 && errno == EWOULDBLOCK)
+        return false; // nothing was written, the stream is still intact
+#else
+    (void)dropIfFull; // ESP8266 writes wait until sent or timed out
     client.flush(); // make sure previous data all sent.
+    size_t length = snprintf_P(writeBuffer, sizeof(writeBuffer), PSTR("event: %s\ndata: %s\n\n"), event, data);
+    if (length < sizeof(writeBuffer) ? client.write(writeBuffer, length) == length
+                                     : client.printf("event: %s\ndata: %s\n\n", event, data) == length)
+        return true;
 #endif
-    written = client.write(data, len);
-    if (written == 0)
-    {
-        YIELD();
-        client.stop();
-        ESP_LOGW(TAG, "Failed writing to WiFi Client (%d of %d), connection closed.", written, len);
-        return false;
-    }
-    return true;
+    client.stop();
+    ESP_LOGW(TAG, "Failed writing SSE %s event, connection closed.", event);
+    return false;
 }
 
 // Helper functions for connection throttling
@@ -339,6 +420,8 @@ void notify_new_ipv6_address()
 void web_loop()
 {
     if (!web_setup_done)
+        return;
+    if (recoverStoppedOTAServices())
         return;
 
     static char *json = status_json;
@@ -468,12 +551,16 @@ void web_loop()
             ESP_LOGW(TAG, "WARNING web_loop JSON length: %d is over 80%% of available buffer", strlen(json));
         }
         JSON_REMOVE_NL(json);
-        if (!firmwareUpdateSub) // Only send if we are not in middle of firmware upgrade.
-            SSEBroadcastState(json);
+        {
+            SSELock lock;
+            if (!firmwareUpdateSub) // Only send if we are not in middle of firmware upgrade.
+                SSEBroadcastState(json);
+        }
 
         mdnsUpdatePending = true;
     }
     GIVE_MUTEX();
+    sendSSEHeartbeats();
     static time_t mdnsDoorUpdateAt = 0;
     if (lastDoorUpdateAt && !mdnsDoorUpdateAt)
     {
@@ -516,6 +603,7 @@ void setup_web()
 #ifndef ESP8266
     // We allocated json as a global block.  We are on dual core CPU.  We need to serialize access to the resource.
     jsonMutex = xSemaphoreCreateMutex();
+    sseMutex = xSemaphoreCreateRecursiveMutex();
 #endif
     last_reported_paired = homekit_is_paired();
 
@@ -1085,35 +1173,49 @@ bool helperGarageLockState(const std::string &key, const char *value, configSett
     return true;
 }
 
+// These requests come from the settings page and use simple JSON fields.
+static const char *findWebField(const char *json, const char *field)
+{
+    const char *start = json;
+    while ((start = strstr(start, field)) != nullptr)
+    {
+        start += strlen(field);
+        start += strspn(start, " \t\r\n");
+        if (*start == ':')
+        {
+            ++start;
+            return start + strspn(start, " \t\r\n");
+        }
+    }
+    return nullptr;
+}
+
+static bool readWebString(const char *json, const char *field, std::string &result)
+{
+    const char *start = findWebField(json, field);
+    if (!start || *start != '"')
+        return false;
+    const char *end = strchr(++start, '"');
+    if (!end)
+        return false;
+    result.assign(start, end - start);
+    return true;
+}
+
 bool helperCredentials(const std::string &key, const char *value, configSetting *action)
 {
-    const char *newUsername = strstr(value, "username");
-    const char *newCredentials = strstr(value, "credentials");
-    const char *newPassword = strstr(value, "password");
-    if (!(newUsername && newCredentials && newPassword))
+    std::string username, credentials, password;
+    if (!readWebString(value, "\"username\"", username) ||
+        !readWebString(value, "\"credentials\"", credentials) ||
+        !readWebString(value, "\"password\"", password))
         return false;
 
-    // JSON string passed in.
-    // Very basic parsing, not using library functions to save memory
-    // find the colon after the key string
-    newUsername = strchr(newUsername, ':') + 1;
-    newCredentials = strchr(newCredentials, ':') + 1;
-    newPassword = strchr(newPassword, ':') + 1;
-    // for strings find the double quote
-    newUsername = strchr(newUsername, '"') + 1;
-    newCredentials = strchr(newCredentials, '"') + 1;
-    newPassword = strchr(newPassword, '"') + 1;
-    // null terminate the strings (at closing quote).
-    *strchr(newUsername, '"') = (char)0;
-    *strchr(newCredentials, '"') = (char)0;
-    *strchr(newPassword, '"') = (char)0;
-    // save values...
-    ESP_LOGI(TAG, "Set credentials for user: %s", newUsername);
-    userConfig->set(cfg_wwwUsername, newUsername);
-    userConfig->set(cfg_wwwCredentials, newCredentials);
+    ESP_LOGI(TAG, "Set credentials for user: %s", username.c_str());
+    userConfig->set(cfg_wwwUsername, username.c_str());
+    userConfig->set(cfg_wwwCredentials, credentials.c_str());
 #ifndef ESP8266
     // We only need to save password (distinct from credentials) on ESP32
-    write_door_str(nvram_ratgdo_pw, newPassword);
+    write_door_str(nvram_ratgdo_pw, password.c_str());
 #endif
     ESP8266_SAVE_CONFIG();
     return true;
@@ -1121,34 +1223,19 @@ bool helperCredentials(const std::string &key, const char *value, configSetting 
 
 bool helperUpdateUnderway(const std::string &key, const char *value, configSetting *action)
 {
+    SSELock lock;
     firmwareSize = 0;
-    firmwareUpdateSub = NULL;
-    const char *md5 = strstr(value, "md5");
-    const char *size = strstr(value, "size");
-    const char *uuid = strstr(value, "uuid");
-
-    if (!(md5 && size && uuid))
+    firmwareUpdateSub = nullptr;
+    std::string md5, uuid;
+    const char *size = findWebField(value, "\"size\"");
+    if (!size || !readWebString(value, "\"md5\"", md5) || !readWebString(value, "\"uuid\"", uuid))
         return false;
 
-    // JSON string of passed in.
-    // Very basic parsing, not using library functions to save memory
-    // find the colon after the key string
-    md5 = strchr(md5, ':') + 1;
-    size = strchr(size, ':') + 1;
-    uuid = strchr(uuid, ':') + 1;
-    // for strings find the double quote
-    md5 = strchr(md5, '"') + 1;
-    uuid = strchr(uuid, '"') + 1;
-    // null terminate the strings (at closing quote).
-    *strchr(md5, '"') = (char)0;
-    *strchr(uuid, '"') = (char)0;
-    // ESP_LOGI(TAG,"MD5: %s, UUID: %s, Size: %d", md5, uuid, atoi(size));
-    // save values...
-    strlcpy(firmwareMD5, md5, sizeof(firmwareMD5));
+    strlcpy(firmwareMD5, md5.c_str(), sizeof(firmwareMD5));
     firmwareSize = atoi(size);
     for (uint32_t channel = 0; channel < SSE_MAX_CHANNELS; channel++)
     {
-        if (subscription[channel].SSEconnected && subscription[channel].clientUUID == uuid && subscription[channel].client.connected())
+        if (subscription[channel].SSEconnected && subscription[channel].clientUUID == uuid.c_str() && subscription[channel].client.connected())
         {
             firmwareUpdateSub = &subscription[channel];
             break;
@@ -1200,30 +1287,46 @@ bool helperResetEncoderCal(const std::string &key, const char *value, configSett
 }
 #endif
 
-void handle_setgdo()
-{
-    // Build-in handlers that do not set a configuration value, or if they do they set multiple values.
-    // key, {reboot, wifiChanged, value, fn to call}
-    static const std::unordered_map<std::string, configSetting> setGDOhandlers = {
-        {PSTR("resetDoor"), {true, false, 0, helperResetDoor}},
-        {PSTR("garageLightOn"), {false, false, 0, helperGarageLightOn}},
-        {PSTR("garageDoorState"), {false, false, 0, helperGarageDoorState}},
-        {PSTR("garageLockState"), {false, false, 0, helperGarageLockState}},
-        {PSTR("credentials"), {false, false, 0, helperCredentials}}, // parse out wwwUsername and credentials
-        {PSTR("updateUnderway"), {false, false, 0, helperUpdateUnderway}},
-        {PSTR("factoryReset"), {true, false, 0, helperFactoryReset}},
+// Built-in handlers that do not set a configuration value, or if they do they set multiple values.
+// {key, reboot, wifiChanged, value, fn_to_call}
+static const configSetting setGDOhandlers[] PROGMEM = {
+    {"resetDoor", true, false, 0, helperResetDoor},
+    {"garageLightOn", false, false, 0, helperGarageLightOn},
+    {"garageDoorState", false, false, 0, helperGarageDoorState},
+    {"garageLockState", false, false, 0, helperGarageLockState},
+    {"credentials", false, false, 0, helperCredentials}, // parse out wwwUsername and credentials
+    {"updateUnderway", false, false, 0, helperUpdateUnderway},
+    {"factoryReset", true, false, 0, helperFactoryReset},
 #ifdef RATGDO32_DISCO
-        {PSTR("assistLaser"), {false, false, 0, helperAssistLaser}},
+    {"assistLaser", false, false, 0, helperAssistLaser},
 #endif
 #ifndef ESP8266
-        {PSTR("resetEncoderCal"), {false, false, 0, helperResetEncoderCal}},
+    {"resetEncoderCal", false, false, 0, helperResetEncoderCal},
 #endif
-    };
+};
+static const size_t nGDOhandlers = sizeof(setGDOhandlers) / sizeof(setGDOhandlers[0]);
+
+static const configSetting *findGDOhandler(const char *key)
+{
+    // Keeping things simple with a linear search, since the number of gdoHandlers is small and
+    // the array cannot be assumed to be sorted. We are avoiding C++ std::map to reduce memory use.
+    const configSetting *p = setGDOhandlers;
+    for (size_t i = 0; i < nGDOhandlers; ++i, ++p)
+    {
+        if (strcmp_P(key, p->key) == 0)
+        {
+            return p;
+        }
+    }
+    return nullptr;
+};
+
+void handle_setgdo()
+{
     bool reboot = false;
     bool error = false;
     bool wifiChanged = false;
     bool saveSettings = false;
-    configSetting actions;
 
     if (!((server.args() == 1) && (server.argName(0) == cfg_timeZone)))
     {
@@ -1236,14 +1339,14 @@ void handle_setgdo()
     {
         std::string key(server.argName(i).c_str());
         std::string value(server.arg(i).c_str());
-
-        if (setGDOhandlers.count(key))
+        const configSetting *setting;
+        if (nullptr != (setting = findGDOhandler(key.c_str())))
         {
             if (key == "credentials")
                 ESP_LOGI(TAG, "Call SetGDO handler for Key: %s", key.c_str());
             else
                 ESP_LOGI(TAG, "Call SetGDO handler for Key: %s, Value: %s", key.c_str(), value.c_str());
-            actions = setGDOhandlers.at(key);
+            configSetting actions = *setting;
             if (actions.fn)
             {
                 error = error || !actions.fn(key, value.c_str(), &actions);
@@ -1251,10 +1354,10 @@ void handle_setgdo()
             reboot = reboot || actions.reboot;
             wifiChanged = wifiChanged || actions.wifiChanged;
         }
-        else if (userConfig->contains(key))
+        else if (nullptr != (setting = userConfig->getDetail(key)))
         {
-            ESP_LOGI(TAG, "Configuration set for Key: %s, Value: %s", key.c_str(), value.c_str());
-            actions = userConfig->getDetail(key);
+            ESP_LOGI(TAG, "Set configuration for Key: %s, Value: %s", key.c_str(), value.c_str());
+            configSetting actions = *setting;
             if (actions.fn)
             {
                 // Value will be set within called function
@@ -1312,6 +1415,10 @@ void handle_setgdo()
 
 void removeSSEsubscription(SSESubscription *s)
 {
+    if (s->clientIP == IPAddress(INADDR_NONE))
+        return; // Already removed
+    if (firmwareUpdateSub == s)
+        firmwareUpdateSub = nullptr;
     if (subscriptionCount > 0)
         subscriptionCount--; // Prevent negative count
     s->heartbeatTimer.detach();
@@ -1350,7 +1457,6 @@ void SSEheartbeat(SSESubscription *s)
     {
         static int8_t lastRSSI = 0;
         static char *json = status_json;
-        TAKE_MUTEX();
         JSON_START(json);
         JSON_ADD_INT("upTime", _millis());
         JSON_ADD_INT("freeHeap", free_heap);
@@ -1379,16 +1485,30 @@ void SSEheartbeat(SSESubscription *s)
 #endif
         JSON_END();
         JSON_REMOVE_NL(json);
-        // retry needed to before event:
-        snprintf_P(writeBuffer, sizeof(writeBuffer), PSTR("event: message\ndata: %s\n\n"), json);
-        clientWrite(s->client, writeBuffer);
-        GIVE_MUTEX();
-        YIELD();
+        sendSSEEvent(s->client, "message", json);
     }
     else
     {
         ESP_LOGD(TAG, "Client %s (%s) not listening (heartbeat), remove SSE subscription", s->clientIP.toString().c_str(), s->clientUUID.c_str());
         removeSSEsubscription(s);
+    }
+}
+
+// Called from the main loop, and during a firmware upload, which runs inside
+// a single handleClient() call.
+static void sendSSEHeartbeats()
+{
+    for (uint32_t i = 0; i < SSE_MAX_CHANNELS; i++)
+    {
+        if (!subscription[i].heartbeatDue)
+            continue;
+        subscription[i].heartbeatDue = false;
+        TAKE_MUTEX();
+        {
+            SSELock lock;
+            SSEheartbeat(&subscription[i]);
+        }
+        GIVE_MUTEX();
         YIELD();
     }
 }
@@ -1402,13 +1522,14 @@ void SSEHandler(uint32_t channel)
         return;
     }
 
+    SSELock lock;
     SSESubscription &s = subscription[channel];
-    s.client = server.client(); // capture SSE server client connection
-    if (s.clientUUID != server.arg(0))
+    if (server.arg(0).isEmpty() || s.clientUUID != server.arg(0))
     {
-        ESP_LOGE(TAG, "Client %s (%s) tries to listen for SSE but not subscribed", s.client.remoteIP().toString().c_str(), server.arg(0).c_str());
+        ESP_LOGE(TAG, "Client %s (%s) tries to listen for SSE but not subscribed", server.client().remoteIP().toString().c_str(), server.arg(0).c_str());
         return handle_notfound();
     }
+    s.client = server.client(); // capture SSE server client connection
     s.client.setNoDelay(true);
     s.client.setTimeout(CLIENT_WRITE_TIMEOUT);       // default is 5000ms which is way too long (Watchdog will fire)
     server.setContentLength(CONTENT_LENGTH_UNKNOWN); // the payload can go on forever
@@ -1417,26 +1538,16 @@ void SSEHandler(uint32_t channel)
     s.SSEfailCount = 0;
     if (s.heartbeatInterval)
     {
+        // Runs on the timer task, so only flag it for sendSSEHeartbeats().
         s.heartbeatTimer.attach_ms(s.heartbeatInterval * 1000, [&s]
-                                   {
-#ifdef ESP8266
-                                       schedule_recurrent_function_us([&s]()
-                                                                      {
-                                                                          SSEheartbeat(&s);
-                                                                          return false; // run the fn only once
-                                                                      },
-                                                                      0); // zero micro seconds (run asap)
-#else
-                                       SSEheartbeat(&s);
-                                       return;
-#endif
-                                   });
+                                   { s.heartbeatDue = true; });
     }
     ESP_LOGD(TAG, "Client %s (%s) listening for SSE events on channel %d", s.client.remoteIP().toString().c_str(), s.clientUUID.c_str(), channel);
 }
 
 void handle_subscribe()
 {
+    SSELock lock;
     uint32_t channel;
     IPAddress clientIP = server.client().remoteIP(); // get IP address of client
     std::string SSEurl = restEvents;
@@ -1479,6 +1590,12 @@ void handle_subscribe()
         else if (server.argName(i).equals("heartbeat"))
             heartbeatIntervalArgIdx = i;
     }
+    if (server.arg(id).isEmpty())
+    {
+        ESP_LOGE(TAG, "Sending %s, for: %s", response400missing, server.uri().c_str());
+        server.send_P(400, type_txt, response400missing);
+        return;
+    }
 
     // check if we already have a subscription for this UUID
     bool foundExisting = false;
@@ -1509,11 +1626,6 @@ void handle_subscribe()
         for (channel = 0; channel < SSE_MAX_CHANNELS; channel++)
             if (subscription[channel].clientIP == IPAddress(INADDR_NONE))
                 break;
-
-        if (channel < SSE_MAX_CHANNELS)
-        {
-            subscriptionCount++;
-        }
     }
 
     // Check if we found a free slot
@@ -1552,10 +1664,15 @@ void handle_subscribe()
         }
     }
 
+    // Count only after the slot is validated and about to be assigned.
+    if (!foundExisting)
+        subscriptionCount++;
+
     // Safe assignment with validation
     subscription[channel].clientIP = clientIP;
     subscription[channel].client = client;
     subscription[channel].heartbeatTimer = Ticker();
+    subscription[channel].heartbeatDue = false;
     subscription[channel].SSEconnected = false;
     subscription[channel].SSEfailCount = 0;
     subscription[channel].clientUUID = server.arg(id);
@@ -1630,13 +1747,17 @@ void SSEBroadcastState(const char *data, BroadcastType type)
     // Flash LED to signal activity
     // led.flash(FLASH_MS);
 
-    // if nothing subscribed, then return
-    if (subscriptionCount == 0)
+    // A log line can come from any task, and the logger holds its own lock,
+    // so it never waits. It is skipped in the log viewer if SSE is busy.
+    SSELock lock(type != LOG_MESSAGE);
+    if (!lock || subscriptionCount == 0)
         return;
 
     for (uint32_t i = 0; i < SSE_MAX_CHANNELS; i++)
     {
-        YIELD(); // yield between each SSE client
+#ifdef ESP8266
+        YIELD(); // yield between each SSE client (ESP8266 writes can wait)
+#endif
         if (subscription[i].SSEconnected)
         {
             if (subscription[i].client.connected())
@@ -1644,38 +1765,14 @@ void SSEBroadcastState(const char *data, BroadcastType type)
                 if (type == LOG_MESSAGE)
                 {
                     if (subscription[i].logViewer)
-                    {
-                        if (snprintf_P(writeBuffer, sizeof(writeBuffer), PSTR("event: logger\ndata: %s\n\n"), data) >= (int)sizeof(writeBuffer))
-                        {
-                            // Will not fit in our write buffer, let system printf handle
-#ifdef ESP8266
-                            subscription[i].client.flush(); // make sure previous data all sent.
-#endif
-                            subscription[i].client.printf("event: logger\ndata: %s\n\n", data);
-                        }
-                        else
-                        {
-                            clientWrite(subscription[i].client, writeBuffer);
-                        }
-                    }
+                        sendSSEEvent(subscription[i].client, "logger", data, true);
                 }
                 else if (type == RATGDO_STATUS)
                 {
                     ESP_LOGV(TAG, "Client %s (%s) send status SSE on channel %d, data: %s",
                              IPAddress(subscription[i].clientIP).toString().c_str(),
                              subscription[i].clientUUID.c_str(), i, data);
-                    if (snprintf_P(writeBuffer, sizeof(writeBuffer), PSTR("event: message\ndata: %s\n\n"), data) >= (int)sizeof(writeBuffer))
-                    {
-                        // Will not fit in our write buffer, let system printf handle
-#ifdef ESP8266
-                        subscription[i].client.flush(); // make sure previous data all sent.
-#endif
-                        subscription[i].client.printf("event: message\ndata: %s\n\n", data);
-                    }
-                    else
-                    {
-                        clientWrite(subscription[i].client, writeBuffer);
-                    }
+                    sendSSEEvent(subscription[i].client, "message", data, subscription[i].logViewer);
                 }
             }
             else
@@ -1716,7 +1813,7 @@ void handle_update()
 #else
         // TODO how to handle firmware upload failure on ESP32?
 #endif
-        firmwareUpdateSub = NULL;
+        clearFirmwareUpdateSubscription();
         ESP_LOGE(TAG, "Firmware upload error. Aborting update, not rebooting");
         server.send(400, type_txt, _updaterError.c_str());
         return;
@@ -1724,8 +1821,9 @@ void handle_update()
 
     if (server.args() > 0)
     {
-        firmwareUpdateSub = NULL;
-        // Don't reboot, user/client must explicitly request reboot.
+        clearFirmwareUpdateSubscription();
+        // The client normally requests reboot after this response. A bounded
+        // fallback also restores services if that client disappears.
         server.send_P(200, type_txt, PSTR("Upload Success.\n"));
     }
     else
@@ -1748,7 +1846,13 @@ void handle_firmware_upload()
     HTTPUpload &upload = server.upload();
     static bool verify = false;
     static size_t size = 0;
-    static const char *md5 = NULL;
+#ifdef ESP32
+    // Use the same mutex as homeSpanPAUSE, retaining it across upload callbacks.
+    static std::shared_lock<std::shared_mutex> homekitUpdateLock(homeSpan.getMutex(), std::defer_lock);
+#endif
+
+    if (upload.status == UPLOAD_FILE_WRITE)
+        sendSSEHeartbeats(); // web_loop() doesn't run until the upload ends
 
     if (upload.status == UPLOAD_FILE_START)
     {
@@ -1764,17 +1868,21 @@ void handle_firmware_upload()
             ESP_LOGE(TAG, "Unauthenticated Update");
             return;
         }
+        // Never reboot in the middle of a transfer/verification. Keep an
+        // existing recovery deadline armed until a terminal callback, so a
+        // rejected retry cannot permanently cancel recovery.
         ESP_LOGI(TAG, "Update: %s", upload.filename.c_str());
         verify = !strcmp(server.arg("action").c_str(), "verify");
         size = atoi(server.arg("size").c_str());
-        md5 = server.arg("md5").c_str();
 
         // We are updating.  If size and MD5 provided, save them
         firmwareSize = size;
-        if (strlen(md5) > 0)
-            strlcpy(firmwareMD5, md5, sizeof(firmwareMD5));
+        // On ESP32 arg() returns a temporary String, so copy before it is destroyed.
+        if (server.arg("md5").length() > 0)
+            strlcpy(firmwareMD5, server.arg("md5").c_str(), sizeof(firmwareMD5));
 
         uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+        otaUploadActive = true;
         ESP_LOGI(TAG, "Available space for upload: %lu", maxSketchSpace);
         ESP_LOGI(TAG, "Firmware size: %s", (firmwareSize > 0) ? std::to_string(firmwareSize).c_str() : "Unknown");
         ESP_LOGI(TAG, "Flash chip speed %d MHz", ESP.getFlashChipSpeed() / 1000000);
@@ -1790,10 +1898,17 @@ void handle_firmware_upload()
         }
         else if (!verify)
         {
+#ifdef ESP32
+            // Pause at HomeSpan's own polling boundary; retain the task and its locks.
+            if (!homekitUpdateLock.owns_lock())
+                homekitUpdateLock.lock();
+#endif
             // Close services so we don't have to handle network traffic during update
             // Only if not verifying as either will have been shutdown on immediately prior upload, or we
             // just want to verify without disrupting operation of the HomeKit service.
             ESP_LOGI(TAG, "Shutdown HomeKit and GDO communications");
+
+            otaServicesStopped = true;
 
             // Service loop has things like reboot after X days, homekit notifications, etc. that we don't want during OTA
             suspend_service_loop = true;
@@ -1806,16 +1921,6 @@ void handle_firmware_upload()
             // Shutdown HomeKit
             homekit_setup_done = false;
             arduino_homekit_close();
-#else
-            // Wait for the current HomeSpan poll iteration to finish, then
-            // prevent further polling until the device reboots. Keep the task
-            // alive so FreeRTOS does not run its TLS deletion callbacks here.
-            if (!homeSpanPollingPaused)
-            {
-                ESP_LOGI(TAG, "Pause HomeSpan polling");
-                homeSpan.getMutex().lock();
-                homeSpanPollingPaused = true;
-            }
 #endif
         }
 
@@ -1851,18 +1956,20 @@ void handle_firmware_upload()
                 ESP_LOGI(TAG, "%s progress: %d", verify ? "Verify" : "Update", uploadPercent);
                 nextPrintPercent += 5;
                 // Report percentage to browser client if it is listening
-                if (firmwareUpdateSub && firmwareUpdateSub->client.connected())
+                TAKE_MUTEX();
                 {
-                    static char *json = status_json;
-                    TAKE_MUTEX();
-                    JSON_START(json);
-                    JSON_ADD_INT("uploadPercent", uploadPercent);
-                    JSON_END();
-                    JSON_REMOVE_NL(json);
-                    snprintf_P(writeBuffer, sizeof(writeBuffer), PSTR("event: uploadStatus\ndata: %s\n\n"), json);
-                    clientWrite(firmwareUpdateSub->client, writeBuffer);
-                    GIVE_MUTEX();
+                    SSELock lock;
+                    if (firmwareUpdateSub && firmwareUpdateSub->client.connected())
+                    {
+                        static char *json = status_json;
+                        JSON_START(json);
+                        JSON_ADD_INT("uploadPercent", uploadPercent);
+                        JSON_END();
+                        JSON_REMOVE_NL(json);
+                        sendSSEEvent(firmwareUpdateSub->client, "uploadStatus", json);
+                    }
                 }
+                GIVE_MUTEX();
             }
         }
         if (!verify)
@@ -1885,7 +1992,7 @@ void handle_firmware_upload()
             {
                 _setUpdaterError();
             }
-            firmwareUpdateSub = NULL;
+            clearFirmwareUpdateSubscription();
         }
     }
     else if (_authenticatedUpdate && upload.status == UPLOAD_FILE_ABORTED)
@@ -1893,6 +2000,23 @@ void handle_firmware_upload()
         if (!verify)
             Update.end();
         ESP_LOGI(TAG, "%s was aborted", verify ? "Verify" : "Update");
-        firmwareUpdateSub = NULL;
+        clearFirmwareUpdateSubscription();
+    }
+#ifdef ESP32
+    // Release polling after success, write/authentication errors, or disconnect.
+    if ((upload.status == UPLOAD_FILE_END || upload.status == UPLOAD_FILE_ABORTED) &&
+        homekitUpdateLock.owns_lock())
+        homekitUpdateLock.unlock();
+#endif
+    if (upload.status == UPLOAD_FILE_END || upload.status == UPLOAD_FILE_ABORTED)
+    {
+        otaUploadActive = false;
+        if (_authenticatedUpdate && otaServicesStopped)
+        {
+            const bool failed = upload.status == UPLOAD_FILE_ABORTED || _updaterError.length();
+            otaRecoveryStart = _millis();
+            otaRecoveryDelay = failed ? OTA_FAILURE_RESTART_MS : OTA_STAGED_RESTART_MS;
+            otaRecoveryPending = true;
+        }
     }
 }

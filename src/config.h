@@ -133,6 +133,7 @@ struct configStr
 
 struct configSetting
 {
+    const char *key;
     bool reboot;
     bool wifiChanged;
     std::variant<bool, int, configStr> value;
@@ -145,8 +146,8 @@ void applyTimezoneWithNTP(const char *ntpServer);
 class userSettings
 {
 private:
-    std::map<std::string, configSetting> settings;
     static userSettings *instancePtr;
+    configSetting *settings;
     userSettings();
     void toFile(Print &file);
 #ifndef ESP8266
@@ -157,12 +158,11 @@ public:
     userSettings(const userSettings &obj) = delete;
     static userSettings *getInstance() { return instancePtr; }
 
-    bool contains(const std::string &key);
     bool set(const std::string &key, const bool value);
     bool set(const std::string &key, const int value);
     bool set(const std::string &key, const char *value);
     std::variant<bool, int, configStr> get(const std::string &key);
-    configSetting getDetail(const std::string &key);
+    configSetting *getDetail(const std::string &key);
     void toStdOut();
     void save();
     void load();
@@ -209,7 +209,15 @@ public:
     bool getDCBypassTTC() { return std::get<bool>(get(cfg_dcBypassTTC)); };
     bool getUseToggle() { return std::get<bool>(get(cfg_useToggle)); };
     uint32_t getDCDebounceDuration() { return std::get<int>(get(cfg_dcDebounceDuration)); };
-    bool getObstFromStatus() { return std::get<bool>(get(cfg_obstFromStatus)); };
+    bool getObstFromStatus() {
+#ifdef HTGDO_V2
+        // Keep the saved setting for OTA compatibility, but use automatic
+        // obstruction source selection for HTGDO Security+ openers.
+        if (getGDOSecurityType() == 1 || getGDOSecurityType() == 2)
+            return false;
+#endif
+        return std::get<bool>(get(cfg_obstFromStatus));
+    };
     uint32_t getBuiltInTTC() { return std::get<int>(get(cfg_builtInTTC)); };
     bool getReverseOnStop() { return std::get<bool>(get(cfg_reverseOnStop)); };
 #ifdef RATGDO32_DISCO
