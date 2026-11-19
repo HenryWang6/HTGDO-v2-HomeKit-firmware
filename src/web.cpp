@@ -1507,11 +1507,6 @@ void handle_subscribe()
         for (channel = 0; channel < SSE_MAX_CHANNELS; channel++)
             if (subscription[channel].clientIP == IPAddress(INADDR_NONE))
                 break;
-
-        if (channel < SSE_MAX_CHANNELS)
-        {
-            subscriptionCount++;
-        }
     }
 
     // Check if we found a free slot
@@ -1549,6 +1544,10 @@ void handle_subscribe()
             heartbeatInterval = (uint32_t)hbi;
         }
     }
+
+    // Count only after the slot is validated and about to be assigned.
+    if (!foundExisting)
+        subscriptionCount++;
 
     // Safe assignment with validation
     subscription[channel].clientIP = clientIP;
