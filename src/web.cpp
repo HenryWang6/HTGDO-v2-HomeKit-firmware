@@ -1761,7 +1761,6 @@ void handle_firmware_upload()
     HTTPUpload &upload = server.upload();
     static bool verify = false;
     static size_t size = 0;
-    static const char *md5 = NULL;
 
     if (upload.status == UPLOAD_FILE_START)
     {
@@ -1780,12 +1779,12 @@ void handle_firmware_upload()
         ESP_LOGI(TAG, "Update: %s", upload.filename.c_str());
         verify = !strcmp(server.arg("action").c_str(), "verify");
         size = atoi(server.arg("size").c_str());
-        md5 = server.arg("md5").c_str();
 
         // We are updating.  If size and MD5 provided, save them
         firmwareSize = size;
-        if (strlen(md5) > 0)
-            strlcpy(firmwareMD5, md5, sizeof(firmwareMD5));
+        // On ESP32 arg() returns a temporary String, so copy before it is destroyed.
+        if (server.arg("md5").length() > 0)
+            strlcpy(firmwareMD5, server.arg("md5").c_str(), sizeof(firmwareMD5));
 
         uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
         ESP_LOGI(TAG, "Available space for upload: %lu", maxSketchSpace);
