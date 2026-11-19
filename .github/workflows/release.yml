@@ -167,9 +167,17 @@ jobs:
           cp docs/index.html docs/flash.html docs/installer.js pages/
           cp release_assets/* pages/
 
+          notes_source="docs/releases/${RELEASE_TAG}.md"
+          if [ ! -f "${notes_source}" ]; then
+            echo "Missing release notes: ${notes_source}" >&2
+            exit 1
+          fi
+
           secplus_sha=$(git -C lib/secplus rev-parse HEAD)
           {
-            echo "# ${RELEASE_TAG}"
+            cat "${notes_source}"
+            echo
+            echo "---"
             echo
             echo "- Source commit: ${GITHUB_SHA}"
             echo "- secplus submodule: ${secplus_sha}"
@@ -178,9 +186,6 @@ jobs:
             echo "- pioarduino platform: 55.03.38"
             echo "- HomeSpan: 2.1.8"
             echo "- Improv: 1.2.5"
-            echo
-            echo "This prerelease validates the public installer and update workflow."
-            echo "Real garage-door-opener validation is incomplete; this firmware is not approved for shipping or pre-flashing."
           } > release-notes.md
 
       - name: Upload release assets
