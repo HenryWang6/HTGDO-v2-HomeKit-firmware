@@ -1085,35 +1085,49 @@ bool helperGarageLockState(const std::string &key, const char *value, configSett
     return true;
 }
 
+// These requests come from the settings page and use simple JSON fields.
+static const char *findWebField(const char *json, const char *field)
+{
+    const char *start = json;
+    while ((start = strstr(start, field)) != nullptr)
+    {
+        start += strlen(field);
+        start += strspn(start, " \t\r\n");
+        if (*start == ':')
+        {
+            ++start;
+            return start + strspn(start, " \t\r\n");
+        }
+    }
+    return nullptr;
+}
+
+static bool readWebString(const char *json, const char *field, std::string &result)
+{
+    const char *start = findWebField(json, field);
+    if (!start || *start != '"')
+        return false;
+    const char *end = strchr(++start, '"');
+    if (!end)
+        return false;
+    result.assign(start, end - start);
+    return true;
+}
+
 bool helperCredentials(const std::string &key, const char *value, configSetting *action)
 {
-    const char *newUsername = strstr(value, "username");
-    const char *newCredentials = strstr(value, "credentials");
-    const char *newPassword = strstr(value, "password");
-    if (!(newUsername && newCredentials && newPassword))
+    std::string username, credentials, password;
+    if (!readWebString(value, "\"username\"", username) ||
+        !readWebString(value, "\"credentials\"", credentials) ||
+        !readWebString(value, "\"password\"", password))
         return false;
 
-    // JSON string passed in.
-    // Very basic parsing, not using library functions to save memory
-    // find the colon after the key string
-    newUsername = strchr(newUsername, ':') + 1;
-    newCredentials = strchr(newCredentials, ':') + 1;
-    newPassword = strchr(newPassword, ':') + 1;
-    // for strings find the double quote
-    newUsername = strchr(newUsername, '"') + 1;
-    newCredentials = strchr(newCredentials, '"') + 1;
-    newPassword = strchr(newPassword, '"') + 1;
-    // null terminate the strings (at closing quote).
-    *strchr(newUsername, '"') = (char)0;
-    *strchr(newCredentials, '"') = (char)0;
-    *strchr(newPassword, '"') = (char)0;
-    // save values...
-    ESP_LOGI(TAG, "Set credentials for user: %s", newUsername);
-    userConfig->set(cfg_wwwUsername, newUsername);
-    userConfig->set(cfg_wwwCredentials, newCredentials);
+    ESP_LOGI(TAG, "Set credentials for user: %s", username.c_str());
+    userConfig->set(cfg_wwwUsername, username.c_str());
+    userConfig->set(cfg_wwwCredentials, credentials.c_str());
 #ifndef ESP8266
     // We only need to save password (distinct from credentials) on ESP32
-    write_door_str(nvram_ratgdo_pw, newPassword);
+    write_door_str(nvram_ratgdo_pw, password.c_str());
 #endif
     ESP8266_SAVE_CONFIG();
     return true;
@@ -1123,32 +1137,16 @@ bool helperUpdateUnderway(const std::string &key, const char *value, configSetti
 {
     firmwareSize = 0;
     firmwareUpdateSub = NULL;
-    const char *md5 = strstr(value, "md5");
-    const char *size = strstr(value, "size");
-    const char *uuid = strstr(value, "uuid");
-
-    if (!(md5 && size && uuid))
+    std::string md5, uuid;
+    const char *size = findWebField(value, "\"size\"");
+    if (!size || !readWebString(value, "\"md5\"", md5) || !readWebString(value, "\"uuid\"", uuid))
         return false;
 
-    // JSON string of passed in.
-    // Very basic parsing, not using library functions to save memory
-    // find the colon after the key string
-    md5 = strchr(md5, ':') + 1;
-    size = strchr(size, ':') + 1;
-    uuid = strchr(uuid, ':') + 1;
-    // for strings find the double quote
-    md5 = strchr(md5, '"') + 1;
-    uuid = strchr(uuid, '"') + 1;
-    // null terminate the strings (at closing quote).
-    *strchr(md5, '"') = (char)0;
-    *strchr(uuid, '"') = (char)0;
-    // ESP_LOGI(TAG,"MD5: %s, UUID: %s, Size: %d", md5, uuid, atoi(size));
-    // save values...
-    strlcpy(firmwareMD5, md5, sizeof(firmwareMD5));
+    strlcpy(firmwareMD5, md5.c_str(), sizeof(firmwareMD5));
     firmwareSize = atoi(size);
     for (uint32_t channel = 0; channel < SSE_MAX_CHANNELS; channel++)
     {
-        if (subscription[channel].SSEconnected && subscription[channel].clientUUID == uuid && subscription[channel].client.connected())
+        if (subscription[channel].SSEconnected && subscription[channel].clientUUID == uuid.c_str() && subscription[channel].client.connected())
         {
             firmwareUpdateSub = &subscription[channel];
             break;
