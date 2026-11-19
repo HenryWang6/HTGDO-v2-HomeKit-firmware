@@ -117,6 +117,9 @@ int main() {
         while (!acquired.load()) std::this_thread::yield();
         coreHeld=true;
         emit("prefix () contended\n");
+        suppressSerialLog=true;
+        emit("prefix () contended quiet\n");
+        suppressSerialLog=false;
         coreHeld=false;
     }
     worker.join();
