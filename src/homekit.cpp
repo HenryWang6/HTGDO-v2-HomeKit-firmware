@@ -1395,14 +1395,15 @@ void notify_homekit_light(bool state)
 void enable_service_homekit_motion(bool reboot)
 {
 #ifdef ESP32
-    // only create if not already created AND motion accessory is enabled in settings
     if (!garage_door.has_motion_sensor)
     {
         write_door_int(nvram_has_motion, 1);
         garage_door.has_motion_sensor = true;
         if (userConfig->getMotionHomeKit())
         {
-            createMotionAccessories();
+            // Pause HomeSpan's polling task while updating its accessory database.
+            homeSpanPAUSE
+            enable_service_homekit_motion_sensor(true);
         }
         if (reboot)
         {

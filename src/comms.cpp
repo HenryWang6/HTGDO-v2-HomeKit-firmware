@@ -2023,7 +2023,6 @@ void comms_loop_sec2()
             if (!garage_door.has_motion_sensor)
             {
                 ESP_LOGI(TAG, "Detected new Motion Sensor. Enabling Service");
-                garage_door.has_motion_sensor = true;
                 motionTriggers.bit.motion = 1;
                 userConfig->set(cfg_motionTriggers, motionTriggers.asInt);
                 ESP8266_SAVE_CONFIG();
