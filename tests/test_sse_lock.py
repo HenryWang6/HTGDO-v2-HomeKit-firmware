@@ -95,6 +95,7 @@ void handle_notfound() { ++notFound; }
 static bool web_setup_done = true;
 static uint32_t subscriptionCount;
 // STRUCT
+SSESubscription *firmwareUpdateSub = nullptr;
 // LOCK
 static bool sendSSEEvent(WiFiClient &, const char *, const char *, bool = false) { assert(depth > 0); ++events; return true; }
 static SSESubscription *beat;
@@ -131,8 +132,17 @@ int main() {
 
     // Removing a subscription twice only counts it once.
     subscriptionCount = 2;
-    removeSSEsubscription(&s); removeSSEsubscription(&s);
-    assert(subscriptionCount == 1 && !s.SSEconnected && depth == 0);
+    SSESubscription &other = subscription[3];
+    other.clientIP = 8;
+    firmwareUpdateSub = &s;
+    {
+        SSELock lock;
+        removeSSEsubscription(&other);
+        assert(subscriptionCount == 1 && firmwareUpdateSub == &s);
+        removeSSEsubscription(&s); removeSSEsubscription(&s);
+        assert(subscriptionCount == 0 && !s.SSEconnected && !firmwareUpdateSub);
+    }
+    assert(depth == 0);
 }
 """
 
@@ -146,7 +156,7 @@ class SSELockTest(unittest.TestCase):
         struct = source[source.index("#define SSE_MAX_CHANNELS"):
                         source.index("// During firmware update note which subscribed client")]
         lock = source[source.index("// Serializes the SSE subscriptions"):
-                      source.index("// mDNS update management")]
+                      source.index("static void clearFirmwareUpdateSubscription")]
         functions = "\n".join(function(source, d) for d in (
             "void removeSSEsubscription(SSESubscription *s)\n{",
             "static void sendSSEHeartbeats()\n{",

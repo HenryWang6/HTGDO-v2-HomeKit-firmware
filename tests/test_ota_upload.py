@@ -154,6 +154,7 @@ struct Client { bool connected() { return streamConnected; } };
 struct SSESubscription { Client client; bool active=false; };
 SSESubscription *firmwareUpdateSub=nullptr;
 struct SSELock { explicit operator bool() const { return true; } };
+void clearFirmwareUpdateSubscription() { firmwareUpdateSub=nullptr; }
 char statusStorage[256]{}, *status_json=statusStorage, writeBuffer[512]{};
 void clientWrite(Client,const char *) {}
 bool sendSSEEvent(Client,const char *,const char *) { return sendOk; }

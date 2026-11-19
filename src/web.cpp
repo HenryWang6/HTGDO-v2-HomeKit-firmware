@@ -282,6 +282,12 @@ struct SSELock
 };
 #endif
 
+static void clearFirmwareUpdateSubscription()
+{
+    SSELock lock;
+    firmwareUpdateSub = nullptr;
+}
+
 // mDNS update management... re-announcing every 2 minutes.
 #define MDNS_ANNOUNCE_TIMEOUT (2 * 60 * 1000)
 // But not more often than every 10 seconds if pending updates.
@@ -545,8 +551,11 @@ void web_loop()
             ESP_LOGW(TAG, "WARNING web_loop JSON length: %d is over 80%% of available buffer", strlen(json));
         }
         JSON_REMOVE_NL(json);
-        if (!firmwareUpdateSub) // Only send if we are not in middle of firmware upgrade.
-            SSEBroadcastState(json);
+        {
+            SSELock lock;
+            if (!firmwareUpdateSub) // Only send if we are not in middle of firmware upgrade.
+                SSEBroadcastState(json);
+        }
 
         mdnsUpdatePending = true;
     }
@@ -1214,8 +1223,9 @@ bool helperCredentials(const std::string &key, const char *value, configSetting 
 
 bool helperUpdateUnderway(const std::string &key, const char *value, configSetting *action)
 {
+    SSELock lock;
     firmwareSize = 0;
-    firmwareUpdateSub = NULL;
+    firmwareUpdateSub = nullptr;
     std::string md5, uuid;
     const char *size = findWebField(value, "\"size\"");
     if (!size || !readWebString(value, "\"md5\"", md5) || !readWebString(value, "\"uuid\"", uuid))
@@ -1223,7 +1233,6 @@ bool helperUpdateUnderway(const std::string &key, const char *value, configSetti
 
     strlcpy(firmwareMD5, md5.c_str(), sizeof(firmwareMD5));
     firmwareSize = atoi(size);
-    SSELock lock;
     for (uint32_t channel = 0; channel < SSE_MAX_CHANNELS; channel++)
     {
         if (subscription[channel].SSEconnected && subscription[channel].clientUUID == uuid.c_str() && subscription[channel].client.connected())
@@ -1408,6 +1417,8 @@ void removeSSEsubscription(SSESubscription *s)
 {
     if (s->clientIP == IPAddress(INADDR_NONE))
         return; // Already removed
+    if (firmwareUpdateSub == s)
+        firmwareUpdateSub = nullptr;
     if (subscriptionCount > 0)
         subscriptionCount--; // Prevent negative count
     s->heartbeatTimer.detach();
@@ -1736,14 +1747,10 @@ void SSEBroadcastState(const char *data, BroadcastType type)
     // Flash LED to signal activity
     // led.flash(FLASH_MS);
 
-    // if nothing subscribed, then return
-    if (subscriptionCount == 0)
-        return;
-
     // A log line can come from any task, and the logger holds its own lock,
     // so it never waits. It is skipped in the log viewer if SSE is busy.
     SSELock lock(type != LOG_MESSAGE);
-    if (!lock)
+    if (!lock || subscriptionCount == 0)
         return;
 
     for (uint32_t i = 0; i < SSE_MAX_CHANNELS; i++)
@@ -1806,7 +1813,7 @@ void handle_update()
 #else
         // TODO how to handle firmware upload failure on ESP32?
 #endif
-        firmwareUpdateSub = NULL;
+        clearFirmwareUpdateSubscription();
         ESP_LOGE(TAG, "Firmware upload error. Aborting update, not rebooting");
         server.send(400, type_txt, _updaterError.c_str());
         return;
@@ -1814,7 +1821,7 @@ void handle_update()
 
     if (server.args() > 0)
     {
-        firmwareUpdateSub = NULL;
+        clearFirmwareUpdateSubscription();
         // The client normally requests reboot after this response. A bounded
         // fallback also restores services if that client disappears.
         server.send_P(200, type_txt, PSTR("Upload Success.\n"));
@@ -1985,7 +1992,7 @@ void handle_firmware_upload()
             {
                 _setUpdaterError();
             }
-            firmwareUpdateSub = NULL;
+            clearFirmwareUpdateSubscription();
         }
     }
     else if (_authenticatedUpdate && upload.status == UPLOAD_FILE_ABORTED)
@@ -1993,7 +2000,7 @@ void handle_firmware_upload()
         if (!verify)
             Update.end();
         ESP_LOGI(TAG, "%s was aborted", verify ? "Verify" : "Update");
-        firmwareUpdateSub = NULL;
+        clearFirmwareUpdateSubscription();
     }
 #ifdef ESP32
     // Release polling after success, write/authentication errors, or disconnect.
